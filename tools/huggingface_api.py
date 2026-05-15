@@ -9,12 +9,20 @@ import httpx
 
 HF_API = "https://huggingface.co/api"
 
-# Filter out large organizations — we want individual practitioners
-_ORG_BLOCKLIST = {
-    "microsoft", "google", "meta-llama", "mistralai", "openai", "facebook",
-    "tiiuae", "bigscience", "EleutherAI", "allenai", "salesforce", "amazon",
-    "huggingface", "stabilityai", "databricks", "nvidia", "cerebras",
-}
+# Substrings that indicate an organization account — filter these out
+_ORG_PATTERNS = [
+    "microsoft", "google", "meta-llama", "meta-", "mistralai", "openai",
+    "facebook", "tiiuae", "bigscience", "eleutherai", "allenai", "salesforce",
+    "amazon", "huggingface", "stabilityai", "databricks", "nvidia", "cerebras",
+    "qwen", "alibaba", "baidu", "tencent", "apple", "deepmind", "anthropic",
+    "01-ai", "internlm", "thudm", "llava", "lmsys", "together", "cohere",
+    "-ai", "-hf", "-team", "-org", "community",
+]
+
+
+def _is_org(author: str) -> bool:
+    low = author.lower()
+    return any(p in low for p in _ORG_PATTERNS)
 
 # Map role type to HF pipeline tasks
 TASK_MAP = {
@@ -59,7 +67,7 @@ def _fetch_task_authors(task: str, seen: set[str], limit: int) -> list[dict]:
     for model in models:
         raw_id = model.get("id") or model.get("modelId") or ""
         author = model.get("author") or (raw_id.split("/")[0] if "/" in raw_id else "")
-        if not author or author.lower() in _ORG_BLOCKLIST:
+        if not author or _is_org(author):
             continue
         author_models.setdefault(author, []).append(model)
 

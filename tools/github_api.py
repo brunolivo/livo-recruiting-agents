@@ -1,8 +1,9 @@
 """
 GitHub API sourcer — finds real engineers and data scientists.
 
-Strategy: search repositories matching AI/ML keywords, collect unique repo owners,
-then fetch their full profiles. Repo stars and topics give strong skill signals.
+Two-strategy approach:
+1. User search — finds people whose bio/location mentions AI/ML keywords
+2. Repo search — finds repo owners with starred AI/ML projects (fallback)
 
 Rate limits: 60 req/hour unauthenticated, 5000/hour with GITHUB_TOKEN.
 """
@@ -36,13 +37,64 @@ def _get(url: str, params: dict | None = None) -> dict | list | None:
 
 def search_engineers(keywords: list[str], count: int = 10) -> list[dict]:
     """
-    Find real AI engineers/data scientists by searching their repos.
-    Returns structured profiles ready for the sourcing agent to synthesize.
+    Find real AI engineers/data scientists. Tries user search first,
+    then repo-owner search as fallback.
     """
-    query = " ".join(keywords[:5]) + " language:Python stars:>20"
-    data = _get(f"{GITHUB_API}/search/repositories", {
-        "q": query, "sort": "stars", "order": "desc", "per_page": 50,
+    profiles = _search_by_users(keywords, count)
+    if len(profiles) < 3:
+        profiles += _search_by_repos(keywords, count - len(profiles))
+    return profiles[:count]
+
+
+def _search_by_users(keywords: list[str], count: int) -> list[dict]:
+    """Search GitHub users whose bio/name matches AI/ML keywords."""
+    # Use the most specific keyword for user search
+    core_kw = " ".join(keywords[:2])
+    query = f"{core_kw} in:bio repos:>3 followers:>10"
+
+    data = _get(f"{GITHUB_API}/search/users", {
+        "q": query, "sort": "followers", "order": "desc", "per_page": min(count * 2, 30),
     })
+    if not data or not data.get("items"):
+        return []
+
+    seen: set[str] = set()
+    profiles: list[dict] = []
+
+    for user in data["items"][:count * 2]:
+        login = user.get("login", "")
+        if not login or login in seen:
+            continue
+        seen.add(login)
+        profile = _build_profile(login)
+        if profile:
+            profiles.append(profile)
+        if len(profiles) >= count:
+            break
+
+    return profiles
+
+
+def _search_by_repos(keywords: list[str], count: int) -> list[dict]:
+    """Find real engineers by searching AI/ML repos and collecting unique owners."""
+    # Build a simpler query — avoid overly specific multi-word combos
+    ai_terms = [k for k in keywords if k.lower() in (
+        "llm", "rag", "machine-learning", "deep-learning", "pytorch", "tensorflow",
+        "transformers", "nlp", "computer-vision", "reinforcement-learning",
+        "machine learning", "deep learning", "natural language processing",
+    )]
+    query_kw = ai_terms[0] if ai_terms else keywords[0] if keywords else "machine-learning"
+    query = f'"{query_kw}" language:Python stars:>5'
+
+    data = _get(f"{GITHUB_API}/search/repositories", {
+        "q": query, "sort": "stars", "order": "desc", "per_page": 40,
+    })
+    if not data or not data.get("items"):
+        # Last resort: search popular AI repos
+        data = _get(f"{GITHUB_API}/search/repositories", {
+            "q": "machine-learning language:Python stars:>100",
+            "sort": "stars", "order": "desc", "per_page": 40,
+        })
     if not data:
         return []
 
@@ -55,7 +107,6 @@ def search_engineers(keywords: list[str], count: int = 10) -> list[dict]:
         if not login or login in seen or owner.get("type") != "User":
             continue
         seen.add(login)
-
         profile = _build_profile(login, featured_repo=repo)
         if profile:
             profiles.append(profile)
@@ -86,13 +137,11 @@ def _build_profile(login: str, featured_repo: dict | None = None) -> dict | None
     ]
 
     languages = list({r["language"] for r in top_repos if r["language"]})
-
     all_topics: list[str] = []
     for r in top_repos:
         all_topics.extend(r.get("topics", []))
     skills = list(dict.fromkeys(languages + all_topics))[:12]
 
-    notable = ""
     if featured_repo:
         notable = (
             f"{featured_repo['name']} ({featured_repo.get('stargazers_count', 0)} stars)"
@@ -101,6 +150,8 @@ def _build_profile(login: str, featured_repo: dict | None = None) -> dict | None
     elif top_repos:
         r = top_repos[0]
         notable = f"{r['name']} ({r['stars']} stars)" + (f" — {r['description']}" if r["description"] else "")
+    else:
+        notable = f"{user.get('public_repos', 0)} public repos"
 
     return {
         "name": user.get("name") or login,
