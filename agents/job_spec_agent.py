@@ -70,6 +70,7 @@ Return ONLY the JSON, no other text."""
         system_prompt=SYSTEM_PROMPT,
         user_message=prompt,
         agent_name="Job Spec Agent",
+        use_web_search=False,
     )
 
     # Parse the JSON response

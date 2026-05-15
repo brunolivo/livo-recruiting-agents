@@ -14,6 +14,7 @@ Discovery is done by the APIs with real data.
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from models.job_spec import JobSpec
 from models.candidate import Candidate, CandidateSource, RoleType
 from agents.base_agent import run_agent, PLATFORMS
@@ -165,30 +166,29 @@ def source_candidates(job_spec: JobSpec, num_candidates: int = 10) -> list[Candi
 def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]:
     """Use GitHub, HuggingFace, and ArXiv APIs to find real technical candidates."""
     keywords = _keywords(job_spec)
-    raw_profiles: list[dict] = []
 
-    # GitHub — primary source (real repo owners with AI projects)
-    gh = github_api.search_engineers(keywords, count=num_candidates)
-    raw_profiles.extend(gh)
+    # Run all three APIs in parallel
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        gh_fut = pool.submit(github_api.search_engineers, keywords, num_candidates)
+        hf_fut = pool.submit(huggingface_api.search_practitioners, job_spec.role_type.value, num_candidates // 2)
+        ax_fut = pool.submit(arxiv_api.search_researchers, keywords[:3], max(1, num_candidates // 3))
+        gh = gh_fut.result() or []
+        hf = hf_fut.result() or []
+        ax = ax_fut.result() or []
 
-    # HuggingFace — ML practitioners with published models
-    hf = huggingface_api.search_practitioners(job_spec.role_type.value, count=num_candidates // 2)
-    raw_profiles.extend(hf)
-
-    # ArXiv — researchers (especially good for senior/research-oriented roles)
-    ax = arxiv_api.search_researchers(keywords[:3], count=num_candidates // 3)
-    raw_profiles.extend(ax)
+    raw_profiles: list[dict] = gh + hf + ax
 
     if not raw_profiles:
         # All APIs failed — fall back to LLM
         return _source_via_llm(job_spec, num_candidates)
 
-    # LLM synthesizes raw API data into structured Candidate objects
+    # LLM synthesizes raw API data into structured Candidate objects (no web search needed)
     prompt = _synthesis_prompt(raw_profiles, job_spec, num_candidates)
     result = run_agent(
         system_prompt=SYSTEM_PROMPT,
         user_message=prompt,
         agent_name=f"Sourcing Agent ({job_spec.role_type.value})",
+        use_web_search=False,
     )
     candidates = _parse_candidates(result, job_spec)
 

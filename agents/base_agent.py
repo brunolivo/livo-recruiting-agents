@@ -111,8 +111,9 @@ def run_agent(
     tools: list[dict] | None = None,
     tool_handlers: dict | None = None,
     agent_name: str = "Agent",
+    use_web_search: bool = True,
 ) -> str:
-    all_tools = [WEB_SEARCH_TOOL]
+    all_tools = [WEB_SEARCH_TOOL] if use_web_search else []
     if tools:
         all_tools.extend(tools)
 
@@ -124,11 +125,10 @@ def run_agent(
     _log(f"[{agent_name}] starting...")
 
     while True:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=all_tools,
-        )
+        kwargs: dict = {"model": MODEL, "messages": messages}
+        if all_tools:
+            kwargs["tools"] = all_tools
+        response = client.chat.completions.create(**kwargs)
 
         choice = response.choices[0]
         msg = choice.message
