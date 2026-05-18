@@ -54,6 +54,7 @@ def score_and_rank_candidates(
         for i, c in enumerate(candidates)
     ]
 
+    loc_line = f"\nPREFERRED LOCATION: {job_spec.location} — prefer candidates in or near this location; penalise candidates clearly based in a different continent unless remote is explicit." if job_spec.location else ""
     prompt = f"""Score these {len(candidates)} candidates for:
 
 ROLE: {job_spec.title} at {job_spec.company}
@@ -61,7 +62,7 @@ REQUIRED SKILLS: {', '.join(job_spec.required_skills)}
 NICE TO HAVE: {', '.join(job_spec.nice_to_have_skills)}
 EXPERIENCE: {job_spec.experience_years_min}+ years
 IDEAL BACKGROUND: {job_spec.ideal_background}
-RED FLAGS: {', '.join(job_spec.red_flags)}
+RED FLAGS: {', '.join(job_spec.red_flags)}{loc_line}
 
 CANDIDATES:
 {json.dumps(profiles, indent=2)}

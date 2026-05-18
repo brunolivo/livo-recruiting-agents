@@ -13,6 +13,7 @@ interface FormData {
   description: string;
   role_type: string;
   num_candidates: number;
+  location: string;
 }
 
 interface ProgressEntry {
@@ -42,6 +43,50 @@ const ROLE_OPTIONS = [
     desc: "Human-AI interaction design",
   },
 ];
+
+// Example prompts keyed by role type
+const EXAMPLE_PROMPTS: Record<string, { label: string; text: string }[]> = {
+  "AI Engineer": [
+    {
+      label: "Senior LLM engineer",
+      text: "Senior AI engineer with 5+ years experience building LLM-powered products. Strong in Python, RAG pipelines, and deploying models to production. Healthcare or regulated industry background is a plus.",
+    },
+    {
+      label: "MLOps / infra",
+      text: "MLOps engineer who can own our model deployment infrastructure. Experience with model serving, monitoring, and CI/CD for ML. PyTorch and HuggingFace ecosystem.",
+    },
+    {
+      label: "NLP specialist",
+      text: "NLP engineer specialising in text classification, entity extraction, and fine-tuning transformer models. Experience with clinical or medical text is highly valued.",
+    },
+  ],
+  "Data Scientist": [
+    {
+      label: "Applied ML scientist",
+      text: "Applied data scientist with strong ML fundamentals — forecasting, classification, and experimentation. Experience in healthcare data or marketplace dynamics preferred.",
+    },
+    {
+      label: "Demand forecasting",
+      text: "Data scientist with deep experience in demand forecasting and time-series modelling. Comfortable owning end-to-end: from data cleaning to model deployment.",
+    },
+  ],
+  "AI Product Manager": [
+    {
+      label: "AI PM – growth stage",
+      text: "AI Product Manager who has shipped LLM-powered features in a fast-moving startup. Comfortable writing prompts, reading model evals, and aligning engineering and business goals.",
+    },
+    {
+      label: "Healthcare tech PM",
+      text: "Product Manager with experience in healthcare SaaS or staffing technology. Strong data intuition and track record of driving adoption of AI features.",
+    },
+  ],
+  "AI Designer": [
+    {
+      label: "AI UX designer",
+      text: "UX designer who has designed interfaces for AI-assisted workflows — chatbots, recommendation systems, or automated scheduling. Strong in Figma and user research.",
+    },
+  ],
+};
 
 const PIPELINE_STAGES = [
   { key: "job_spec", label: "Job Spec" },
@@ -107,6 +152,7 @@ export default function Home() {
     description: "",
     role_type: "AI Engineer",
     num_candidates: 8,
+    location: "",
   });
   const [progressLog, setProgressLog] = useState<ProgressEntry[]>([]);
   const [currentStage, setCurrentStage] = useState("");
@@ -137,7 +183,10 @@ export default function Home() {
       res = await fetch(`${API_URL}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          ...formData,
+          location: formData.location.trim() || undefined,
+        }),
       });
     } catch (err) {
       setError(
@@ -230,31 +279,31 @@ export default function Home() {
 
   // ─── FORM VIEW ───────────────────────────────────────────────────────────
   if (view === "form") {
+    const examples = EXAMPLE_PROMPTS[formData.role_type] ?? [];
     return (
-      <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex flex-col items-center px-4 py-16">
+      <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50 flex flex-col items-center px-4 py-12">
         <div className="w-full max-w-2xl">
           {/* Header */}
-          <div className="text-center mb-10">
+          <div className="text-center mb-8">
             <div className="inline-flex items-center gap-2 bg-indigo-600 text-white px-4 py-1.5 rounded-full text-sm font-semibold mb-4">
               <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-              Powered by AI Agents
+              Livo Hunter
             </div>
             <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight">
-              <span className="text-indigo-600">Livo Health</span>
+              Find your next<br />
+              <span className="text-indigo-600">AI hire</span>
             </h1>
-            <p className="text-lg text-gray-500 mt-2 font-medium">
-              AI Recruiting Pipeline
-            </p>
-            <p className="text-sm text-gray-400 mt-1">
-              Find, enrich, score, and reach out to top candidates — automatically.
+            <p className="text-sm text-gray-400 mt-3 max-w-md mx-auto">
+              Describe the role and we&apos;ll search GitHub, HuggingFace, and ArXiv for real candidates — scored, ranked, and outreach-ready.
             </p>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-8 space-y-7">
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-8 space-y-6">
+
             {/* Role type */}
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-3">
-                Role Type
+                What role are you hiring for?
               </label>
               <div className="grid grid-cols-2 gap-3">
                 {ROLE_OPTIONS.map((role) => {
@@ -273,69 +322,103 @@ export default function Home() {
                       }`}
                     >
                       <div className="text-2xl mb-1">{role.icon}</div>
-                      <div
-                        className={`text-sm font-semibold ${
-                          selected ? "text-indigo-700" : "text-gray-800"
-                        }`}
-                      >
+                      <div className={`text-sm font-semibold ${selected ? "text-indigo-700" : "text-gray-800"}`}>
                         {role.value}
                       </div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {role.desc}
-                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">{role.desc}</div>
                     </button>
                   );
                 })}
               </div>
             </div>
 
+            {/* Location */}
+            <div>
+              <label htmlFor="location" className="block text-sm font-semibold text-gray-700 mb-1.5">
+                Location
+                <span className="ml-1.5 text-xs font-normal text-gray-400">optional — leave blank for global search</span>
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-base">📍</span>
+                <input
+                  id="location"
+                  type="text"
+                  value={formData.location}
+                  onChange={(e) => setFormData((f) => ({ ...f, location: e.target.value }))}
+                  placeholder="Barcelona, Spain"
+                  className="w-full rounded-xl border border-gray-200 pl-9 pr-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition"
+                />
+              </div>
+            </div>
+
             {/* Job description */}
             <div>
-              <label
-                htmlFor="description"
-                className="block text-sm font-semibold text-gray-700 mb-1.5"
-              >
-                Job Description
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="description" className="block text-sm font-semibold text-gray-700">
+                  Role description
+                </label>
+                <span className="text-xs text-gray-400">Be specific — skills, seniority, domain</span>
+              </div>
+
+              {/* Example prompt chips */}
+              {examples.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {examples.map((ex) => (
+                    <button
+                      key={ex.label}
+                      type="button"
+                      onClick={() => setFormData((f) => ({ ...f, description: ex.text }))}
+                      className="text-xs px-3 py-1.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition-colors font-medium"
+                    >
+                      {ex.label} ↗
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <textarea
                 id="description"
                 value={formData.description}
-                onChange={(e) =>
-                  setFormData((f) => ({ ...f, description: e.target.value }))
-                }
-                placeholder="Describe the ideal candidate — skills, experience, context about Livo Health…"
-                rows={4}
-                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition"
+                onChange={(e) => setFormData((f) => ({ ...f, description: e.target.value }))}
+                placeholder={`Example: "Senior AI engineer with 4+ years experience building LLM-powered products. Strong Python and RAG skills. Healthcare or regulated industry background preferred."\n\nTips:\n• Include seniority (junior / mid / senior / staff)\n• Mention must-have skills vs nice-to-haves\n• Add domain context (healthcare, fintech, …)\n• Specify remote / hybrid / on-site`}
+                rows={7}
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition leading-relaxed"
               />
             </div>
 
-            {/* Num candidates */}
-            <div>
-              <label
-                htmlFor="num_candidates"
-                className="block text-sm font-semibold text-gray-700 mb-1.5"
-              >
-                Candidates to Source
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  id="num_candidates"
-                  type="number"
-                  min={3}
-                  max={15}
-                  value={formData.num_candidates}
-                  onChange={(e) =>
-                    setFormData((f) => ({
-                      ...f,
-                      num_candidates: Math.max(
-                        3,
-                        Math.min(15, parseInt(e.target.value) || 8)
-                      ),
-                    }))
-                  }
-                  className="w-24 rounded-xl border border-gray-200 px-3 py-2 text-sm text-center font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                />
-                <span className="text-xs text-gray-400">Between 3 and 15</span>
+            {/* Num candidates + data sources row */}
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <label htmlFor="num_candidates" className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+                  Candidates
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    id="num_candidates"
+                    type="number"
+                    min={3}
+                    max={15}
+                    value={formData.num_candidates}
+                    onChange={(e) =>
+                      setFormData((f) => ({
+                        ...f,
+                        num_candidates: Math.max(3, Math.min(15, parseInt(e.target.value) || 8)),
+                      }))
+                    }
+                    className="w-20 rounded-xl border border-gray-200 px-3 py-2 text-sm text-center font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                  <span className="text-xs text-gray-400">3–15</span>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Searches</p>
+                <div className="flex items-center gap-1.5 justify-end">
+                  {["GitHub", "HuggingFace", "ArXiv"].map((src) => (
+                    <span key={src} className="text-xs px-2 py-1 rounded-md bg-gray-100 text-gray-500 font-medium">
+                      {src}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
 

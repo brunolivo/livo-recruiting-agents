@@ -43,11 +43,12 @@ def _keywords(job_spec: JobSpec) -> list[str]:
 
 
 def _synthesis_prompt(raw_profiles: list[dict], job_spec: JobSpec, count: int) -> str:
+    loc_line = f"\nPreferred location: {job_spec.location} (prioritise candidates whose profile shows this location, but include remote-friendly profiles too)" if job_spec.location else ""
     return f"""Map these REAL profiles (fetched live from APIs) to structured candidates for:
 
 Role: {job_spec.title} at {job_spec.company}
 Required skills: {', '.join(job_spec.required_skills)}
-Nice to have: {', '.join(job_spec.nice_to_have_skills)}
+Nice to have: {', '.join(job_spec.nice_to_have_skills)}{loc_line}
 
 REAL PROFILES (do not invent — only use what's here):
 {json.dumps(raw_profiles, indent=2)}
@@ -166,10 +167,11 @@ def source_candidates(job_spec: JobSpec, num_candidates: int = 10) -> list[Candi
 def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]:
     """Use GitHub, HuggingFace, and ArXiv APIs to find real technical candidates."""
     keywords = _keywords(job_spec)
+    location = job_spec.location  # may be None
 
     # Run all three APIs in parallel
     with ThreadPoolExecutor(max_workers=3) as pool:
-        gh_fut = pool.submit(github_api.search_engineers, keywords, num_candidates)
+        gh_fut = pool.submit(github_api.search_engineers, keywords, num_candidates, location)
         hf_fut = pool.submit(huggingface_api.search_practitioners, job_spec.role_type.value, num_candidates // 2)
         ax_fut = pool.submit(arxiv_api.search_researchers, keywords[:3], max(1, num_candidates // 3))
         gh = gh_fut.result() or []

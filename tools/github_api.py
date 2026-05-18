@@ -35,22 +35,27 @@ def _get(url: str, params: dict | None = None) -> dict | list | None:
         return None
 
 
-def search_engineers(keywords: list[str], count: int = 10) -> list[dict]:
+def search_engineers(keywords: list[str], count: int = 10, location: str | None = None) -> list[dict]:
     """
-    Find real AI engineers/data scientists. Tries user search first,
-    then repo-owner search as fallback.
+    Find real AI engineers/data scientists. Tries user search first (with location
+    filter when provided), then falls back to global search, then repo-owner search.
     """
-    profiles = _search_by_users(keywords, count)
+    profiles = _search_by_users(keywords, count, location=location)
+    if len(profiles) < 3 and location:
+        # Not enough local results — retry globally
+        profiles = _search_by_users(keywords, count, location=None)
     if len(profiles) < 3:
         profiles += _search_by_repos(keywords, count - len(profiles))
     return profiles[:count]
 
 
-def _search_by_users(keywords: list[str], count: int) -> list[dict]:
+def _search_by_users(keywords: list[str], count: int, location: str | None = None) -> list[dict]:
     """Search GitHub users whose bio/name matches AI/ML keywords."""
-    # Use the most specific keyword for user search
     core_kw = " ".join(keywords[:2])
-    query = f"{core_kw} in:bio repos:>3 followers:>10"
+    # Use the city part only (e.g. "Barcelona" from "Barcelona, Spain")
+    city = location.split(",")[0].strip() if location else None
+    loc_filter = f" location:{city}" if city else ""
+    query = f"{core_kw} in:bio{loc_filter} repos:>3 followers:>10"
 
     data = _get(f"{GITHUB_API}/search/users", {
         "q": query, "sort": "followers", "order": "desc", "per_page": min(count * 2, 30),

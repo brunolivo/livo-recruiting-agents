@@ -51,6 +51,7 @@ class RunRequest(BaseModel):
     role_type: Optional[str] = None  # "AI Product Manager" | "AI Designer" | etc.
     num_candidates: int = 10
     enrich_top_n: int = 10
+    location: Optional[str] = None   # e.g. "Barcelona, Spain"
 
 
 class InterviewRequest(BaseModel):
@@ -97,6 +98,7 @@ async def _stream_pipeline(request: RunRequest) -> AsyncGenerator[str, None]:
             request.num_candidates,
             request.enrich_top_n,
             on_progress,
+            request.location,
         )
 
     pipeline_task = asyncio.create_task(run_in_background())
@@ -171,6 +173,7 @@ async def run_sync(request: RunRequest):
             request.num_candidates,
             request.enrich_top_n,
             on_progress,
+            request.location,
         )
         _results[job_id] = result
 

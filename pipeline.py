@@ -56,6 +56,7 @@ def run_pipeline(
     num_candidates: int = 10,
     enrich_top_n: int = 10,
     on_progress=None,
+    location: str | None = None,
 ) -> PipelineResult:
     """
     Run the full recruiting pipeline end to end.
@@ -74,13 +75,14 @@ def run_pipeline(
 
     # Stage 1: Parse job requirements
     progress("job_spec", f"Parsing job requirements for: {raw_description[:60]}...")
-    job_spec = parse_job_requirements(raw_description, role_type)
+    job_spec = parse_job_requirements(raw_description, role_type, location)
     progress("job_spec", f"Job spec created: {job_spec.title} at {job_spec.company}")
 
     result = PipelineResult(job_spec=job_spec)
 
     # Stage 2: Source candidates
-    progress("sourcing", f"Sourcing {num_candidates} {job_spec.role_type.value} candidates...")
+    loc_hint = f" in {job_spec.location}" if job_spec.location else ""
+    progress("sourcing", f"Sourcing {num_candidates} {job_spec.role_type.value} candidates{loc_hint}...")
     result.sourced = source_candidates(job_spec, num_candidates=num_candidates)
     progress("sourcing", f"Found {len(result.sourced)} candidates across platforms")
 

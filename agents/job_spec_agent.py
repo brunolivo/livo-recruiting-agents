@@ -27,7 +27,7 @@ When given a role or free-form description, you:
 Be specific and actionable. Think like a top-tier executive recruiter."""
 
 
-def parse_job_requirements(raw_description: str, role_type: RoleType | None = None) -> JobSpec:
+def parse_job_requirements(raw_description: str, role_type: RoleType | None = None, location: str | None = None) -> JobSpec:
     """
     Takes a free-form job description and returns a structured JobSpec.
     """
@@ -42,9 +42,10 @@ def parse_job_requirements(raw_description: str, role_type: RoleType | None = No
     else:
         base = None
 
+    location_hint = f"\nLocation requirement: {location}" if location else ""
     prompt = f"""Analyze this hiring requirement and return a structured candidate profile as JSON.
 
-Raw description: {raw_description}
+Raw description: {raw_description}{location_hint}
 
 {"Base template to refine: " + base.model_dump_json(indent=2) if base else ""}
 
@@ -85,7 +86,7 @@ Return ONLY the JSON, no other text."""
         return JobSpec(**data)
     except Exception:
         # Fallback to base template or defaults
-        return base or JobSpec(
-            role_type=role_type or RoleType.AI_ENGINEER,
-            title="AI Role",
-        )
+        spec = base or JobSpec(role_type=role_type or RoleType.AI_ENGINEER, title="AI Role")
+        if location and not spec.location:
+            spec.location = location
+        return spec
