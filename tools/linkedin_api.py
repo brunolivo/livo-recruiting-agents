@@ -1,18 +1,25 @@
 """
-LinkedIn sourcer — discovers real professionals via two-layer approach.
+LinkedIn sourcer — discovers real professionals via three-layer approach.
 
-Layer 1 — Discovery (always runs, no cost):
-  Brave Search API with `site:linkedin.com/in` queries.
+Layer 1 — Discovery via Brave Search API (BRAVE_API_KEY set):
+  Runs structured site:linkedin.com/in queries and parses snippets.
   Runs 4 parallel searches with different keyword combos + location variants.
-  Extracts name, headline, location, and profile URL from search snippets.
+
+Layer 1b — Discovery via Tavily Search API (TAVILY_API_KEY set, no credit card):
+  Same structured queries via Tavily's AI-native search.
+  Free tier: 1,000 searches/month at https://tavily.com — email only, no card.
 
 Layer 2 — Enrichment (optional, requires PROXYCURL_API_KEY):
   Proxycurl fetches the full LinkedIn profile for each URL discovered in layer 1.
   Adds skills, experience, education, connections count.
   Cost: ~$0.01–0.03 per profile. Only called if the env key is set.
 
-Set PROXYCURL_API_KEY in .env to enable enrichment.
-Brave works out of the box if BRAVE_API_KEY is already set.
+Layer 3 — LLM web search fallback (no search API key set):
+  Uses the run_agent loop (OpenRouter built-in Brave tool) to find profiles.
+  Slower but always works with zero additional keys.
+
+Priority: Brave → Tavily → LLM fallback.
+Set PROXYCURL_API_KEY in .env to enable enrichment on top of any discovery layer.
 """
 
 import os
@@ -21,8 +28,10 @@ import httpx
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BRAVE_KEY      = os.getenv("BRAVE_API_KEY", "")
+TAVILY_KEY     = os.getenv("TAVILY_API_KEY", "")
 PROXYCURL_KEY  = os.getenv("PROXYCURL_API_KEY", "")
 BRAVE_API      = "https://api.search.brave.com/res/v1/web/search"
+TAVILY_API     = "https://api.tavily.com/search"
 PROXYCURL_API  = "https://nubela.co/proxycurl/api"
 
 
@@ -36,22 +45,30 @@ def search_profiles(
     """
     Find real LinkedIn professionals matching the given keywords and location.
 
-    Mode 1 — Direct Brave API (BRAVE_API_KEY set):
-      Runs structured site:linkedin.com/in queries and parses snippets.
-      Optional Proxycurl enrichment if PROXYCURL_API_KEY is also set.
+    Priority order:
+      1. Brave Search API  (BRAVE_API_KEY)    — fastest, most results
+      2. Tavily Search API (TAVILY_API_KEY)   — free tier, no credit card
+      3. LLM web search fallback              — always works, no extra keys
 
-    Mode 2 — LLM web search fallback (no BRAVE_API_KEY):
-      Uses the run_agent loop (which has Brave access via OpenRouter)
-      to find LinkedIn profiles. Slower but always works.
+    Optional: PROXYCURL_API_KEY enriches profiles from any discovery layer.
     """
+    # Layer 1: Brave (direct API)
     if BRAVE_KEY:
-        urls_meta = _discover_urls(keywords, count * 3, location)
+        urls_meta = _discover_urls(keywords, count * 3, location, engine="brave")
         if urls_meta:
             if PROXYCURL_KEY:
                 return _enrich_with_proxycurl(urls_meta, count)
             return [m for m in urls_meta if m.get("name")][:count]
 
-    # Fallback: ask the LLM to find LinkedIn profiles via web search
+    # Layer 1b: Tavily (direct API, free tier)
+    if TAVILY_KEY:
+        urls_meta = _discover_urls(keywords, count * 3, location, engine="tavily")
+        if urls_meta:
+            if PROXYCURL_KEY:
+                return _enrich_with_proxycurl(urls_meta, count)
+            return [m for m in urls_meta if m.get("name")][:count]
+
+    # Layer 3: LLM web search fallback (always works)
     return _llm_linkedin_search(keywords, count, location)
 
 
@@ -133,9 +150,15 @@ def _parse_llm_linkedin_result(raw: str) -> list[dict]:
 
 # ── Layer 1: URL discovery via Brave ─────────────────────────────────────────
 
-def _discover_urls(keywords: list[str], target: int, location: str | None) -> list[dict]:
+def _discover_urls(
+    keywords: list[str],
+    target: int,
+    location: str | None,
+    engine: str = "brave",
+) -> list[dict]:
     """
-    Run multiple Brave searches in parallel and collect unique LinkedIn profile URLs.
+    Run multiple searches in parallel and collect unique LinkedIn profile URLs.
+    engine: "brave" | "tavily"
     Returns raw snippet dicts: {name, profile_url, headline, location, source}.
     """
     queries = _build_queries(keywords, location)
@@ -144,6 +167,8 @@ def _discover_urls(keywords: list[str], target: int, location: str | None) -> li
     results: list[dict] = []
 
     def _run_query(q: str) -> list[dict]:
+        if engine == "tavily":
+            return _tavily_linkedin_search(q, count=10)
         return _brave_linkedin_search(q, count=10)
 
     with ThreadPoolExecutor(max_workers=min(len(queries), 5)) as pool:
@@ -213,6 +238,45 @@ def _brave_linkedin_search(query: str, count: int = 10) -> list[dict]:
         desc  = item.get("description", "") or item.get("extra_snippets", [""])[0] if item.get("extra_snippets") else item.get("description", "")
 
         # Only keep linkedin.com/in/* profile pages (not /company, /jobs, /posts)
+        if not _is_profile_url(url):
+            continue
+
+        parsed = _parse_snippet(url, title, str(desc))
+        if parsed:
+            profiles.append(parsed)
+
+    return profiles
+
+
+def _tavily_linkedin_search(query: str, count: int = 10) -> list[dict]:
+    """
+    Call Tavily Search API and parse LinkedIn profile results.
+    Free tier: 1,000 searches/month — sign up at https://tavily.com (email only, no card).
+    """
+    try:
+        r = httpx.post(
+            TAVILY_API,
+            json={
+                "api_key":        TAVILY_KEY,
+                "query":          query,
+                "max_results":    count,
+                "search_depth":   "basic",
+                "include_domains": ["linkedin.com"],
+            },
+            timeout=15,
+        )
+        if r.status_code != 200:
+            return []
+        items = r.json().get("results", [])
+    except Exception:
+        return []
+
+    profiles: list[dict] = []
+    for item in items:
+        url   = item.get("url", "")
+        title = item.get("title", "")
+        desc  = item.get("content", "")
+
         if not _is_profile_url(url):
             continue
 
