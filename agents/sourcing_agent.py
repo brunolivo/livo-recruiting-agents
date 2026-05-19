@@ -42,13 +42,64 @@ def _keywords(job_spec: JobSpec) -> list[str]:
     return (job_spec.sourcing_keywords + job_spec.required_skills)[:8]
 
 
+def _loc_terms(location: str) -> list[str]:
+    return [t.strip().lower() for t in location.replace(",", " ").split() if len(t.strip()) > 2]
+
+
+def _annotate_location(profiles: list[dict], location: str | None) -> list[dict]:
+    """
+    Add a _loc_match field to each profile: "match" | "unknown" | "no_match".
+    This lets the LLM and scoring agent make deterministic decisions without guessing.
+    """
+    if not location:
+        return profiles
+    terms = _loc_terms(location)
+    for p in profiles:
+        raw_loc = (p.get("location") or "").lower().strip()
+        # Also check affiliations (ArXiv) and company field
+        extra = " ".join([
+            (p.get("company") or ""),
+            " ".join(p.get("affiliations", [])),
+        ]).lower()
+        haystack = f"{raw_loc} {extra}"
+
+        if not raw_loc and not extra.strip():
+            p["_loc_match"] = "unknown"
+        elif any(t in haystack for t in terms):
+            p["_loc_match"] = "match"
+        else:
+            p["_loc_match"] = "no_match"
+    return profiles
+
+
+def _sort_by_location(profiles: list[dict]) -> list[dict]:
+    """Sort profiles: match → unknown → no_match."""
+    order = {"match": 0, "unknown": 1, "no_match": 2}
+    return sorted(profiles, key=lambda p: order.get(p.get("_loc_match", "unknown"), 1))
+
+
 def _synthesis_prompt(raw_profiles: list[dict], job_spec: JobSpec, count: int) -> str:
-    loc_line = f"\nPreferred location: {job_spec.location} (prioritise candidates whose profile shows this location, but include remote-friendly profiles too)" if job_spec.location else ""
+    if job_spec.location:
+        terms = _loc_terms(job_spec.location)
+        n_match   = sum(1 for p in raw_profiles if p.get("_loc_match") == "match")
+        n_unknown = sum(1 for p in raw_profiles if p.get("_loc_match") == "unknown")
+        loc_instruction = f"""
+LOCATION FILTER — {job_spec.location} (strict):
+Each profile has a _loc_match field:
+  "match"    → candidate is in {job_spec.location} — ALWAYS include these first
+  "unknown"  → candidate has no location info (may be remote) — include to fill remaining slots
+  "no_match" → candidate is in a different location — EXCLUDE unless match+unknown < {count}
+
+Currently: {n_match} match, {n_unknown} unknown in the pool below.
+Fill the {count} slots in order: all "match" first, then "unknown", then "no_match" only if needed."""
+    else:
+        loc_instruction = ""
+
     return f"""Map these REAL profiles (fetched live from APIs) to structured candidates for:
 
 Role: {job_spec.title} at {job_spec.company}
 Required skills: {', '.join(job_spec.required_skills)}
-Nice to have: {', '.join(job_spec.nice_to_have_skills)}{loc_line}
+Nice to have: {', '.join(job_spec.nice_to_have_skills)}{loc_instruction}
 
 REAL PROFILES (do not invent — only use what's here):
 {json.dumps(raw_profiles, indent=2)}
@@ -183,10 +234,14 @@ def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]
     raw_profiles: list[dict] = gh + hf + ax
 
     if not raw_profiles:
-        # All APIs failed — fall back to LLM
         return _source_via_llm(job_spec, num_candidates)
 
-    # LLM synthesizes raw API data into structured Candidate objects (no web search needed)
+    # Annotate each profile with a location match signal, then sort: match → unknown → no_match.
+    # The LLM sees local candidates first and receives hard include/exclude rules.
+    location = job_spec.location
+    raw_profiles = _annotate_location(raw_profiles, location)
+    raw_profiles = _sort_by_location(raw_profiles)
+
     prompt = _synthesis_prompt(raw_profiles, job_spec, num_candidates)
     result = run_agent(
         system_prompt=SYSTEM_PROMPT,
@@ -196,9 +251,19 @@ def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]
     )
     candidates = _parse_candidates(result, job_spec)
 
-    # If synthesis failed, build candidates directly from raw profiles
     if not candidates:
         candidates = _direct_map(raw_profiles[:num_candidates], job_spec)
+
+    # Safety net: if location was specified, re-sort candidates so any with a matching
+    # location field bubble to the top (in case the LLM still picked wrong order).
+    if location and candidates:
+        terms = _loc_terms(location)
+        def _cand_rank(c: Candidate) -> int:
+            loc = (c.location or "").lower()
+            if not loc:
+                return 1
+            return 0 if any(t in loc for t in terms) else 2
+        candidates.sort(key=_cand_rank)
 
     return candidates[:num_candidates]
 

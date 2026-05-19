@@ -1,15 +1,18 @@
 """
 GitHub API sourcer — finds real engineers and data scientists.
 
-Two-strategy approach:
-1. User search — finds people whose bio/location mentions AI/ML keywords
-2. Repo search — finds repo owners with starred AI/ML projects (fallback)
+Location strategy:
+  When a location is given, runs TWO searches in parallel:
+    1. location-filtered search  (GitHub-verified location field)
+    2. global search             (more results, then sorted by profile.location match)
+  Results are merged location-first, so the LLM always sees local candidates at the top.
 
 Rate limits: 60 req/hour unauthenticated, 5000/hour with GITHUB_TOKEN.
 """
 
 import os
 import httpx
+from concurrent.futures import ThreadPoolExecutor
 
 GITHUB_API = "https://api.github.com"
 _TOKEN = os.getenv("GITHUB_TOKEN", "")
@@ -35,30 +38,99 @@ def _get(url: str, params: dict | None = None) -> dict | list | None:
         return None
 
 
+# ── Location helpers ──────────────────────────────────────────────────────────
+
+def _loc_terms(location: str) -> list[str]:
+    """Split "Barcelona, Spain" → ["barcelona", "spain"]"""
+    return [t.strip().lower() for t in location.replace(",", " ").split() if len(t.strip()) > 2]
+
+
+def _loc_rank(profile_location: str, terms: list[str]) -> int:
+    """
+    0 = location matches target
+    1 = location unknown (not set — could be remote)
+    2 = location set but doesn't match
+    """
+    loc = (profile_location or "").lower().strip()
+    if not loc:
+        return 1
+    return 0 if any(t in loc for t in terms) else 2
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
 def search_engineers(keywords: list[str], count: int = 10, location: str | None = None) -> list[dict]:
     """
-    Find real AI engineers/data scientists. Tries user search first (with location
-    filter when provided), then falls back to global search, then repo-owner search.
+    Find real AI engineers/data scientists.
+
+    With location: runs a location-filtered search AND a global search in parallel,
+    then merges results sorted by location match (matched → unknown → mismatched).
+    This ensures the LLM synthesis always sees local candidates first.
+
+    Without location: user bio search + repo-owner fallback.
     """
-    profiles = _search_by_users(keywords, count, location=location)
-    if len(profiles) < 3 and location:
-        # Not enough local results — retry globally
-        profiles = _search_by_users(keywords, count, location=None)
+    if location:
+        return _search_with_location(keywords, count, location)
+
+    profiles = _search_by_users(keywords, count, city=None)
     if len(profiles) < 3:
         profiles += _search_by_repos(keywords, count - len(profiles))
     return profiles[:count]
 
 
-def _search_by_users(keywords: list[str], count: int, location: str | None = None) -> list[dict]:
-    """Search GitHub users whose bio/name matches AI/ML keywords."""
+def _search_with_location(keywords: list[str], count: int, location: str) -> list[dict]:
+    """Run local + global searches in parallel and merge, location-matched first."""
+    city = location.split(",")[0].strip()
+    terms = _loc_terms(location)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        local_fut  = pool.submit(_search_by_users, keywords, count, city)
+        global_fut = pool.submit(_search_by_users, keywords, count * 2, None)
+        local_profiles  = local_fut.result()  or []
+        global_profiles = global_fut.result() or []
+
+    # Sort global by location match so matched ones bubble up
+    global_sorted = sorted(
+        global_profiles,
+        key=lambda p: _loc_rank(p.get("location", ""), terms),
+    )
+
+    # Merge: local-first (deduped by username)
+    seen: set[str] = {p["username"] for p in local_profiles}
+    merged = local_profiles[:]
+    for p in global_sorted:
+        if p["username"] not in seen:
+            merged.append(p)
+            seen.add(p["username"])
+
+    # If still thin, top up with repo-owner search (also sorted by location)
+    if len(merged) < max(3, count // 2):
+        repo_profiles = _search_by_repos(keywords, count)
+        repo_sorted = sorted(
+            repo_profiles,
+            key=lambda p: _loc_rank(p.get("location", ""), terms),
+        )
+        for p in repo_sorted:
+            if p["username"] not in seen:
+                merged.append(p)
+                seen.add(p["username"])
+
+    return merged[:count]
+
+
+# ── Internal search helpers ───────────────────────────────────────────────────
+
+def _search_by_users(keywords: list[str], count: int, city: str | None = None) -> list[dict]:
+    """Search GitHub users whose bio matches AI/ML keywords, optionally filtered by city."""
     core_kw = " ".join(keywords[:2])
-    # Use the city part only (e.g. "Barcelona" from "Barcelona, Spain")
-    city = location.split(",")[0].strip() if location else None
     loc_filter = f" location:{city}" if city else ""
     query = f"{core_kw} in:bio{loc_filter} repos:>3 followers:>10"
 
     data = _get(f"{GITHUB_API}/search/users", {
-        "q": query, "sort": "followers", "order": "desc", "per_page": min(count * 2, 30),
+        "q": query,
+        "sort": "followers",
+        "order": "desc",
+        "per_page": min(count * 2, 30),
     })
     if not data or not data.get("items"):
         return []
@@ -82,20 +154,18 @@ def _search_by_users(keywords: list[str], count: int, location: str | None = Non
 
 def _search_by_repos(keywords: list[str], count: int) -> list[dict]:
     """Find real engineers by searching AI/ML repos and collecting unique owners."""
-    # Build a simpler query — avoid overly specific multi-word combos
     ai_terms = [k for k in keywords if k.lower() in (
         "llm", "rag", "machine-learning", "deep-learning", "pytorch", "tensorflow",
         "transformers", "nlp", "computer-vision", "reinforcement-learning",
         "machine learning", "deep learning", "natural language processing",
     )]
-    query_kw = ai_terms[0] if ai_terms else keywords[0] if keywords else "machine-learning"
+    query_kw = ai_terms[0] if ai_terms else (keywords[0] if keywords else "machine-learning")
     query = f'"{query_kw}" language:Python stars:>5'
 
     data = _get(f"{GITHUB_API}/search/repositories", {
         "q": query, "sort": "stars", "order": "desc", "per_page": 40,
     })
     if not data or not data.get("items"):
-        # Last resort: search popular AI repos
         data = _get(f"{GITHUB_API}/search/repositories", {
             "q": "machine-learning language:Python stars:>100",
             "sort": "stars", "order": "desc", "per_page": 40,

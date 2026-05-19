@@ -42,6 +42,7 @@ def score_and_rank_candidates(
         {
             "index": i,
             "name": c.name,
+            "location": c.location or "",
             "headline": c.headline or "",
             "skills": c.skills,
             "experience_years": c.experience_years,
@@ -54,7 +55,18 @@ def score_and_rank_candidates(
         for i, c in enumerate(candidates)
     ]
 
-    loc_line = f"\nPREFERRED LOCATION: {job_spec.location} — prefer candidates in or near this location; penalise candidates clearly based in a different continent unless remote is explicit." if job_spec.location else ""
+    if job_spec.location:
+        loc_rule = f"""
+LOCATION RULE — {job_spec.location} (hard constraint, not a preference):
+Check each candidate's "location" field:
+  • Matches "{job_spec.location}" (city or country) → no penalty; note as ✓ local in rationale
+  • Empty / null → neutral; note as "location unknown, may be remote"
+  • Different country / continent → subtract 2.5 from fit_score; note as "location mismatch"
+    Exception: if the rationale mentions explicit remote work experience, subtract only 1.
+A candidate with perfect skills but wrong location should score lower than a slightly weaker local candidate."""
+    else:
+        loc_rule = ""
+
     prompt = f"""Score these {len(candidates)} candidates for:
 
 ROLE: {job_spec.title} at {job_spec.company}
@@ -62,7 +74,7 @@ REQUIRED SKILLS: {', '.join(job_spec.required_skills)}
 NICE TO HAVE: {', '.join(job_spec.nice_to_have_skills)}
 EXPERIENCE: {job_spec.experience_years_min}+ years
 IDEAL BACKGROUND: {job_spec.ideal_background}
-RED FLAGS: {', '.join(job_spec.red_flags)}{loc_line}
+RED FLAGS: {', '.join(job_spec.red_flags)}{loc_rule}
 
 CANDIDATES:
 {json.dumps(profiles, indent=2)}
@@ -74,7 +86,7 @@ Return a JSON array with one object per candidate, in the same order:
     "technical_score": 7.5,
     "culture_score": 8.0,
     "fit_score": 7.8,
-    "scoring_rationale": "Brief rationale covering technical match, gaps, and culture fit",
+    "scoring_rationale": "Rationale covering technical match, location status, gaps, and culture fit",
     "recommended": true
   }}
 ]
