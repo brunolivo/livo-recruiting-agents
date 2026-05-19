@@ -39,7 +39,16 @@ Return only candidates with real, checkable profile URLs."""
 
 def _keywords(job_spec: JobSpec) -> list[str]:
     """Extract meaningful search keywords from the job spec."""
-    return (job_spec.sourcing_keywords + job_spec.required_skills)[:8]
+    # Use up to 10 keywords: sourcing_keywords first, then required skills, then nice-to-haves
+    combined = job_spec.sourcing_keywords + job_spec.required_skills + job_spec.nice_to_have_skills
+    # Dedupe while preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for k in combined:
+        if k.lower() not in seen:
+            seen.add(k.lower())
+            unique.append(k)
+    return unique[:10]
 
 
 def _loc_terms(location: str) -> list[str]:
@@ -222,11 +231,14 @@ def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]
     keywords = _keywords(job_spec)
     location = job_spec.location  # may be None
 
-    # Run all three APIs in parallel
+    # Run all three APIs in parallel.
+    # Ask for a large raw pool (3-4× the final target) so the synthesis LLM
+    # has real selection depth — better recall means better ranked output.
+    raw_target = max(num_candidates * 3, 24)
     with ThreadPoolExecutor(max_workers=3) as pool:
-        gh_fut = pool.submit(github_api.search_engineers, keywords, num_candidates, location)
-        hf_fut = pool.submit(huggingface_api.search_practitioners, job_spec.role_type.value, num_candidates // 2)
-        ax_fut = pool.submit(arxiv_api.search_researchers, keywords[:3], max(1, num_candidates // 3))
+        gh_fut = pool.submit(github_api.search_engineers, keywords, raw_target, location)
+        hf_fut = pool.submit(huggingface_api.search_practitioners, job_spec.role_type.value, num_candidates)
+        ax_fut = pool.submit(arxiv_api.search_researchers, keywords[:5], max(5, num_candidates))
         gh = gh_fut.result() or []
         hf = hf_fut.result() or []
         ax = ax_fut.result() or []
