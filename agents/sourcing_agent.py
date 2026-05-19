@@ -20,10 +20,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from models.job_spec import JobSpec
 from models.candidate import Candidate, CandidateSource, RoleType
 from agents.base_agent import run_agent, PLATFORMS
-from tools import github_api, huggingface_api, arxiv_api, linkedin_api
+from tools import github_api, huggingface_api, arxiv_api, linkedin_api, papers_with_code_api, semantic_scholar_api
 
 SYSTEM_PROMPT = """You are a talent sourcer. You receive real candidate profiles fetched
-from GitHub, HuggingFace, ArXiv, and LinkedIn and map them to a structured format.
+from GitHub, HuggingFace, ArXiv, LinkedIn, Papers with Code, and Semantic Scholar and map them to a structured format.
 
 Your job:
 1. Select the most relevant candidates for the role from the real profiles provided
@@ -120,7 +120,7 @@ Select the top {count} most relevant and return as a JSON array:
   {{
     "name": "exact name from profile",
     "role_type": "{job_spec.role_type.value}",
-    "source": "GitHub|HuggingFace|ArXiv|LinkedIn",
+    "source": "GitHub|HuggingFace|ArXiv|LinkedIn|PapersWithCode|SemanticScholar",
     "profile_url": "exact URL from profile",
     "headline": "factual headline from their actual bio/work",
     "location": "from profile or null",
@@ -168,15 +168,17 @@ Return ONLY the JSON array."""
 
 def _parse_candidates(raw: str, job_spec: JobSpec) -> list[Candidate]:
     source_map = {
-        "linkedin": CandidateSource.LINKEDIN,
-        "github": CandidateSource.GITHUB,
-        "huggingface": CandidateSource.HUGGINGFACE,
-        "kaggle": CandidateSource.KAGGLE,
-        "twitter/x": CandidateSource.TWITTER,
-        "twitter": CandidateSource.TWITTER,
-        "dribbble": CandidateSource.DRIBBBLE,
-        "arxiv": CandidateSource.ARXIV,
-        "community": CandidateSource.COMMUNITY,
+        "linkedin":          CandidateSource.LINKEDIN,
+        "github":            CandidateSource.GITHUB,
+        "huggingface":       CandidateSource.HUGGINGFACE,
+        "kaggle":            CandidateSource.KAGGLE,
+        "twitter/x":         CandidateSource.TWITTER,
+        "twitter":           CandidateSource.TWITTER,
+        "dribbble":          CandidateSource.DRIBBBLE,
+        "arxiv":             CandidateSource.ARXIV,
+        "paperswithcode":    CandidateSource.GITHUB,   # closest existing enum
+        "semanticscholar":   CandidateSource.ARXIV,    # academic source
+        "community":         CandidateSource.COMMUNITY,
     }
     role_map = {v.value: v for v in RoleType}
 
@@ -233,21 +235,25 @@ def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]
     keywords = _keywords(job_spec)
     location = job_spec.location  # may be None
 
-    # Run all four sources in parallel.
-    # Ask for a large raw pool (3-4× the final target) so the synthesis LLM
-    # has real selection depth — better recall means better ranked output.
+    # Run all six sources in parallel.
+    # Each source targets a different population — they complement rather than overlap.
+    # Ask for a large raw pool so the synthesis LLM has real selection depth.
     raw_target = max(num_candidates * 3, 24)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        gh_fut = pool.submit(github_api.search_engineers,         keywords,                  raw_target,       location)
-        hf_fut = pool.submit(huggingface_api.search_practitioners,job_spec.role_type.value,  num_candidates)
-        ax_fut = pool.submit(arxiv_api.search_researchers,        keywords[:5],              max(5, num_candidates))
-        li_fut = pool.submit(linkedin_api.search_profiles,        keywords,                  num_candidates,   location)
-        gh = gh_fut.result() or []
-        hf = hf_fut.result() or []
-        ax = ax_fut.result() or []
-        li = li_fut.result() or []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        gh_fut  = pool.submit(github_api.search_engineers,               keywords,                 raw_target,      location)
+        hf_fut  = pool.submit(huggingface_api.search_practitioners,      job_spec.role_type.value, num_candidates)
+        ax_fut  = pool.submit(arxiv_api.search_researchers,              keywords[:5],             max(5, num_candidates))
+        li_fut  = pool.submit(linkedin_api.search_profiles,              keywords,                 num_candidates,  location)
+        pwc_fut = pool.submit(papers_with_code_api.search_practitioners, job_spec.role_type.value, keywords,        num_candidates)
+        s2_fut  = pool.submit(semantic_scholar_api.search_researchers,   job_spec.role_type.value, keywords[:5],    max(5, num_candidates))
+        gh  = gh_fut.result()  or []
+        hf  = hf_fut.result()  or []
+        ax  = ax_fut.result()  or []
+        li  = li_fut.result()  or []
+        pwc = pwc_fut.result() or []
+        s2  = s2_fut.result()  or []
 
-    raw_profiles: list[dict] = gh + hf + ax + li
+    raw_profiles: list[dict] = gh + hf + ax + li + pwc + s2
 
     if not raw_profiles:
         return _source_via_llm(job_spec, num_candidates)

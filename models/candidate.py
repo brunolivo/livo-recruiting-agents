@@ -11,14 +11,16 @@ class RoleType(str, Enum):
 
 
 class CandidateSource(str, Enum):
-    LINKEDIN = "LinkedIn"
-    GITHUB = "GitHub"
-    HUGGINGFACE = "HuggingFace"
-    KAGGLE = "Kaggle"
-    TWITTER = "Twitter/X"
-    DRIBBBLE = "Dribbble"
-    ARXIV = "ArXiv"
-    COMMUNITY = "Community"
+    LINKEDIN          = "LinkedIn"
+    GITHUB            = "GitHub"
+    HUGGINGFACE       = "HuggingFace"
+    KAGGLE            = "Kaggle"
+    TWITTER           = "Twitter/X"
+    DRIBBBLE          = "Dribbble"
+    ARXIV             = "ArXiv"
+    PAPERS_WITH_CODE  = "PapersWithCode"
+    SEMANTIC_SCHOLAR  = "SemanticScholar"
+    COMMUNITY         = "Community"
 
 
 class Candidate(BaseModel):

@@ -22,7 +22,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${inter.variable} ${dmSans.variable} font-sans bg-[#F5F5F2] text-[#1C2631] antialiased`}
+        className={`${inter.variable} ${dmSans.variable} font-sans bg-livo-bg-page text-livo-slate antialiased`}
       >
         {children}
       </body>

@@ -2,52 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Livo Design Tokens ──────────────────────────────────────────────────── */
-:root {
-  /* Brand */
-  --color-primary:        #007C92;
-  --color-primary-hover:  #005362;
-  --color-primary-light:  #E8F4F7;
-  --color-primary-border: rgba(0, 124, 146, 0.25);
-
-  /* Text */
-  --color-text-primary:   #1C2631;
-  --color-text-secondary: #405263;
-  --color-text-tertiary:  #8AA3B8;
-
-  /* Backgrounds */
-  --color-bg-page:        #F5F5F2;
-  --color-bg-secondary:   #EDEDE8;
-  --color-surface:        #FFFFFF;
-
-  /* Semantic */
-  --color-success:        #1FC86E;
-  --color-danger:         #EC221F;
-  --color-warning:        #FCC804;
-  --color-info:           #367DDA;
-
-  /* Borders & shadows */
-  --color-border:         rgba(0, 0, 0, 0.10);
-  --shadow-card:          0 2px 16px 2px rgba(0, 0, 0, 0.10);
-}
-
-/* ── Base overrides ─────────────────────────────────────────────────────── */
-@layer base {
-  html { font-family: var(--font-inter, Inter, sans-serif); }
-}
-
-/* ── Utilities ──────────────────────────────────────────────────────────── */
 @layer utilities {
-  .font-display {
-    font-family: var(--font-display, "DM Sans", sans-serif);
-  }
-
   .animate-fadeIn {
     animation: fadeIn 0.3s ease-out both;
-  }
-
-  .shadow-card {
-    box-shadow: var(--shadow-card);
   }
 }
 

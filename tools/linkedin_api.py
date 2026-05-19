@@ -35,22 +35,100 @@ def search_profiles(
 ) -> list[dict]:
     """
     Find real LinkedIn professionals matching the given keywords and location.
-    Returns a list of profile dicts ready for the synthesis LLM.
+
+    Mode 1 — Direct Brave API (BRAVE_API_KEY set):
+      Runs structured site:linkedin.com/in queries and parses snippets.
+      Optional Proxycurl enrichment if PROXYCURL_API_KEY is also set.
+
+    Mode 2 — LLM web search fallback (no BRAVE_API_KEY):
+      Uses the run_agent loop (which has Brave access via OpenRouter)
+      to find LinkedIn profiles. Slower but always works.
     """
-    if not BRAVE_KEY:
+    if BRAVE_KEY:
+        urls_meta = _discover_urls(keywords, count * 3, location)
+        if urls_meta:
+            if PROXYCURL_KEY:
+                return _enrich_with_proxycurl(urls_meta, count)
+            return [m for m in urls_meta if m.get("name")][:count]
+
+    # Fallback: ask the LLM to find LinkedIn profiles via web search
+    return _llm_linkedin_search(keywords, count, location)
+
+
+def _llm_linkedin_search(keywords: list[str], count: int, location: str | None) -> list[dict]:
+    """
+    Use the existing run_agent + Brave web search to find LinkedIn profiles.
+    This works even without a direct BRAVE_API_KEY because OpenRouter
+    handles the Brave search as a tool call.
+    """
+    # Import here to avoid circular imports at module load
+    from agents.base_agent import run_agent
+
+    loc_clause = f' based in {location}' if location else ''
+    kw_str     = ", ".join(keywords[:5])
+
+    prompt = f"""Search LinkedIn for {count} real professionals matching: {kw_str}{loc_clause}.
+
+Use web_search with queries like:
+  site:linkedin.com/in {' '.join(keywords[:2])}{(' ' + location) if location else ''}
+  site:linkedin.com/in {' '.join(keywords[2:4] or keywords[:2])}
+
+For each person found return a JSON array:
+[{{
+  "name": "Full Name",
+  "source": "LinkedIn",
+  "profile_url": "https://linkedin.com/in/username",
+  "headline": "their job title and company from the search snippet",
+  "location": "city, country if visible",
+  "skills": ["skill1", "skill2"]
+}}]
+
+Return ONLY the JSON array. Only include real profiles with actual linkedin.com/in/ URLs."""
+
+    try:
+        result = run_agent(
+            system_prompt="You are a talent sourcer. Use web_search to find real LinkedIn profiles.",
+            user_message=prompt,
+            agent_name="LinkedIn Search (LLM)",
+            use_web_search=True,
+        )
+        return _parse_llm_linkedin_result(result)
+    except Exception:
         return []
 
-    urls_meta = _discover_urls(keywords, count * 3, location)
-    if not urls_meta:
+
+def _parse_llm_linkedin_result(raw: str) -> list[dict]:
+    """Parse the LLM's JSON response for LinkedIn profiles."""
+    import json, re
+    try:
+        clean = raw.strip()
+        if clean.startswith("```"):
+            clean = clean.split("```")[1]
+            if clean.startswith("json"):
+                clean = clean[4:]
+        start, end = clean.find("["), clean.rfind("]") + 1
+        if start >= 0 and end > start:
+            clean = clean[start:end]
+        items = json.loads(clean)
+    except Exception:
         return []
 
-    if PROXYCURL_KEY:
-        profiles = _enrich_with_proxycurl(urls_meta, count)
-    else:
-        # Use the snippet data we already have — no enrichment API needed
-        profiles = [m for m in urls_meta if m.get("name")]
-
-    return profiles[:count]
+    profiles: list[dict] = []
+    for item in items:
+        url = item.get("profile_url", "")
+        if not url or "linkedin.com/in/" not in url.lower():
+            continue
+        profiles.append({
+            "name":        item.get("name", ""),
+            "username":    url.rstrip("/").split("/in/")[-1].split("/")[0],
+            "source":      "LinkedIn",
+            "profile_url": url,
+            "headline":    item.get("headline", ""),
+            "location":    item.get("location", ""),
+            "skills":      item.get("skills", []),
+            "email":       None,
+        })
+    return profiles
 
 
 # ── Layer 1: URL discovery via Brave ─────────────────────────────────────────
