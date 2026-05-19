@@ -5,12 +5,16 @@ export interface Candidate {
   profile_url?: string;
   headline?: string;
   location?: string;
+  email?: string;
   skills: string[];
   experience_years?: number;
   notable_work?: string;
+  open_source_contributions?: string;
+  publications?: string;
   enriched_summary?: string;
   ai_expertise_depth?: string;
   recent_activity?: string;
+  community_presence?: string;
   fit_score: number;
   technical_score: number;
   culture_score: number;

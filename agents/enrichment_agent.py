@@ -9,6 +9,7 @@ request instead of one call per person.
 import json
 from models.candidate import Candidate, EnrichedCandidate
 from agents.base_agent import run_agent
+from tools import hunter_api
 
 SYSTEM_PROMPT = """You are a talent intelligence specialist who synthesizes candidate profiles
 into structured enrichment data.
@@ -85,11 +86,19 @@ Return ONLY the JSON array. Keep each field concise (1-2 sentences max)."""
     except Exception:
         pass
 
+    # Parallel Hunter.io email lookups for candidates without a known email
+    needs_email = [
+        {"name": c.name, "blog": getattr(c, "blog", None), "company": c.company if hasattr(c, "company") else None}
+        for c in candidates if not c.email
+    ]
+    email_map = hunter_api.find_emails_batch(needs_email) if needs_email else {}
+
     enriched = []
     for i, candidate in enumerate(candidates):
         data = enrichment_map.get(i, {})
+        email = candidate.email or email_map.get(candidate.name)
         enriched.append(EnrichedCandidate(
-            **candidate.model_dump(),
+            **{**candidate.model_dump(), "email": email},
             enriched_summary=data.get("enriched_summary"),
             ai_expertise_depth=data.get("ai_expertise_depth"),
             recent_activity=data.get("recent_activity"),

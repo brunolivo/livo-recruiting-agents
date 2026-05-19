@@ -163,6 +163,14 @@ export default function Home() {
   const [error, setError] = useState("");
   const logEndRef = useRef<HTMLDivElement>(null);
 
+  // Results controls
+  const [starred, setStarred] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  const [filterRecommended, setFilterRecommended] = useState(false);
+  const [filterStarred, setFilterStarred] = useState(false);
+  const [filterSource, setFilterSource] = useState("all");
+  const [filterMinScore, setFilterMinScore] = useState(0);
+
   // Auto-scroll log to bottom
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -568,112 +576,148 @@ export default function Home() {
   }
 
   // ─── RESULTS VIEW ─────────────────────────────────────────────────────────
-  const recommended = candidates.filter((c) => c.recommended);
-  const others = candidates.filter((c) => !c.recommended);
-  const sortedCandidates = [...recommended, ...others];
+  const sortedCandidates = [...candidates].sort((a, b) => b.fit_score - a.fit_score);
+
+  // Available sources for filter
+  const sources = Array.from(new Set(candidates.map((c) => c.source)));
+
+  // Apply filters
+  const filtered = sortedCandidates.filter((c) => {
+    if (filterRecommended && !c.recommended) return false;
+    if (filterStarred && !starred.has(c.name)) return false;
+    if (filterSource !== "all" && c.source !== filterSource) return false;
+    if (c.fit_score < filterMinScore) return false;
+    return true;
+  });
+
+  const toggleStar = (name: string) =>
+    setStarred((prev) => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
+
+  const exportCSV = () => {
+    const rows = [
+      ["Name","Source","Profile URL","Location","Email","Score","Technical","Culture","Recommended","Skills","Notable Work","Outreach Subject","Outreach Message"],
+      ...filtered.map((c) => [
+        c.name, c.source, c.profile_url ?? "", c.location ?? "", c.email ?? "",
+        c.fit_score, c.technical_score, c.culture_score, c.recommended ? "Yes" : "No",
+        c.skills.join("; "), c.notable_work ?? "", c.outreach_subject ?? "", c.outreach_message ?? "",
+      ]),
+    ];
+    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "livo-hunter-candidates.csv"; a.click();
+  };
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 bg-white/90 backdrop-blur-sm border-b border-gray-100 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm font-bold text-gray-800">
-              {formData.role_type}
-            </span>
-            <span className="text-gray-200">|</span>
-            {stats ? (
-              <>
-                <StatChip label="sourced" value={stats.sourced} color="blue" />
-                <StatChip label="enriched" value={stats.enriched} color="cyan" />
-                <StatChip
-                  label="recommended"
-                  value={stats.recommended}
-                  color="indigo"
-                />
-                <StatChip
-                  label="outreach ready"
-                  value={stats.outreached}
-                  color="green"
-                />
-              </>
-            ) : (
-              <span className="text-sm text-gray-500">
-                {candidates.length} candidates found
-              </span>
-            )}
+      {/* Sticky top bar */}
+      <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-100 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col gap-3">
+          {/* Row 1: role + stats + new search */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm font-bold text-gray-800">{formData.role_type}</span>
+              {formData.location && <span className="text-xs text-gray-400">📍 {formData.location}</span>}
+              <span className="text-gray-200">|</span>
+              {stats ? (
+                <>
+                  <StatChip label="sourced" value={stats.sourced} color="blue" />
+                  <StatChip label="recommended" value={stats.recommended} color="indigo" />
+                  <StatChip label="outreach ready" value={stats.outreached} color="green" />
+                  {starred.size > 0 && <StatChip label="starred" value={starred.size} color="amber" />}
+                </>
+              ) : (
+                <span className="text-sm text-gray-500">{candidates.length} candidates</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={exportCSV}
+                className="text-sm font-medium text-gray-600 hover:text-gray-800 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Export CSV
+              </button>
+              <button onClick={() => { setView("form"); setError(""); setFilterRecommended(false); setFilterStarred(false); setFilterSource("all"); setFilterMinScore(0); }}
+                className="text-sm font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-4 py-1.5 rounded-lg transition-colors">
+                ← New Search
+              </button>
+            </div>
           </div>
-          <button
-            onClick={() => {
-              setView("form");
-              setError("");
-            }}
-            className="text-sm font-medium text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-4 py-1.5 rounded-lg transition-colors self-start sm:self-auto"
-          >
-            ← New Search
-          </button>
+
+          {/* Row 2: filters + view toggle */}
+          <div className="flex items-center gap-3 flex-wrap pb-1">
+            {/* Recommended toggle */}
+            <button onClick={() => setFilterRecommended(!filterRecommended)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${filterRecommended ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-200 hover:border-indigo-300"}`}>
+              ⭐ Recommended only
+            </button>
+            {/* Starred toggle */}
+            <button onClick={() => setFilterStarred(!filterStarred)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${filterStarred ? "bg-amber-500 text-white border-amber-500" : "bg-white text-gray-600 border-gray-200 hover:border-amber-300"}`}>
+              ★ Shortlisted only
+            </button>
+            {/* Source filter */}
+            {sources.length > 1 && (
+              <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)}
+                className="text-xs font-semibold px-3 py-1.5 rounded-full border border-gray-200 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-indigo-300 cursor-pointer">
+                <option value="all">All sources</option>
+                {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+            {/* Min score */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500 font-medium">Min score</span>
+              <input type="range" min={0} max={9} step={0.5} value={filterMinScore}
+                onChange={(e) => setFilterMinScore(parseFloat(e.target.value))}
+                className="w-24 accent-indigo-600" />
+              <span className="text-xs font-semibold text-gray-700 w-6">{filterMinScore > 0 ? filterMinScore.toFixed(1) : "–"}</span>
+            </div>
+            <div className="ml-auto flex items-center gap-1.5 border border-gray-200 rounded-lg overflow-hidden">
+              {(["grid", "list"] as const).map((mode) => (
+                <button key={mode} onClick={() => setViewMode(mode)}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${viewMode === mode ? "bg-indigo-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                  {mode === "grid" ? "⊞ Grid" : "☰ List"}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-gray-400">{filtered.length} of {candidates.length}</span>
+          </div>
         </div>
       </div>
 
-      {/* Candidates grid */}
+      {/* Candidates */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        {sortedCandidates.length === 0 ? (
+        {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="text-5xl mb-4">🔍</div>
+            <div className="text-5xl mb-4">{candidates.length === 0 ? "🔍" : "🎛️"}</div>
             <h2 className="text-xl font-bold text-gray-700">
-              No candidates found
+              {candidates.length === 0 ? "No candidates found" : "No candidates match your filters"}
             </h2>
             <p className="text-gray-400 mt-2 max-w-sm">
-              The pipeline ran but couldn&apos;t find matching candidates. Try
-              broadening your job description or increasing the candidate count.
+              {candidates.length === 0
+                ? "Try broadening your job description or increasing the candidate count."
+                : "Try loosening the filters above."}
             </p>
-            <button
-              onClick={() => setView("form")}
-              className="mt-6 px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-medium text-sm hover:bg-indigo-700 transition-colors"
-            >
-              Try Again
+            <button onClick={() => candidates.length === 0 ? setView("form") : (setFilterRecommended(false), setFilterStarred(false), setFilterSource("all"), setFilterMinScore(0))}
+              className="mt-6 px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-medium text-sm hover:bg-indigo-700 transition-colors">
+              {candidates.length === 0 ? "Try Again" : "Clear Filters"}
             </button>
           </div>
+        ) : viewMode === "list" ? (
+          <div className="space-y-2">
+            {filtered.map((c, i) => (
+              <CandidateCard key={i} candidate={c} jobId={jobId} apiUrl={API_URL}
+                starred={starred.has(c.name)} onStar={() => toggleStar(c.name)} listView />
+            ))}
+          </div>
         ) : (
-          <>
-            {recommended.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4">
-                  Top Recommendations
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {recommended.map((c, i) => (
-                    <CandidateCard
-                      key={`rec-${i}`}
-                      candidate={c}
-                      jobId={jobId}
-                      apiUrl={API_URL}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {others.length > 0 && (
-              <div>
-                {recommended.length > 0 && (
-                  <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4">
-                    Other Candidates
-                  </h2>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                  {others.map((c, i) => (
-                    <CandidateCard
-                      key={`other-${i}`}
-                      candidate={c}
-                      jobId={jobId}
-                      apiUrl={API_URL}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filtered.map((c, i) => (
+              <CandidateCard key={i} candidate={c} jobId={jobId} apiUrl={API_URL}
+                starred={starred.has(c.name)} onStar={() => toggleStar(c.name)} />
+            ))}
+          </div>
         )}
       </div>
     </main>
@@ -687,13 +731,14 @@ function StatChip({
 }: {
   label: string;
   value: number;
-  color: "blue" | "cyan" | "indigo" | "green";
+  color: "blue" | "cyan" | "indigo" | "green" | "amber";
 }) {
   const styles = {
     blue: "bg-blue-50 text-blue-700 border-blue-100",
     cyan: "bg-cyan-50 text-cyan-700 border-cyan-100",
     indigo: "bg-indigo-50 text-indigo-700 border-indigo-100",
     green: "bg-green-50 text-green-700 border-green-100",
+    amber: "bg-amber-50 text-amber-700 border-amber-100",
   };
   return (
     <span

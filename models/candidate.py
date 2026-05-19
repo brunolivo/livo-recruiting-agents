@@ -28,6 +28,7 @@ class Candidate(BaseModel):
     profile_url: Optional[str] = None
     headline: Optional[str] = None
     location: Optional[str] = None
+    email: Optional[str] = None
     skills: list[str] = Field(default_factory=list)
     experience_years: Optional[int] = None
     notable_work: Optional[str] = None
