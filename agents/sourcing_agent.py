@@ -2,12 +2,14 @@
 Sourcing Agent — finds real candidate profiles from live platform APIs.
 
 Technical roles (AI Engineer, Data Scientist):
-  GitHub API → real repo owners with AI/ML projects
+  GitHub API    → real repo owners with AI/ML projects
   HuggingFace API → real model authors
-  ArXiv API → real researchers
+  ArXiv API     → real researchers
+  LinkedIn      → professionals found via Brave search + optional Proxycurl enrichment
 
 Non-technical roles (AI PM, AI Designer):
-  LLM + Brave search (no structured public APIs exist for these)
+  LinkedIn      → Brave site:linkedin.com/in search + optional Proxycurl enrichment
+  LLM + Brave   → web search fallback for Twitter/X, Dribbble, communities
 
 The LLM's job here is synthesis and mapping, not discovery.
 Discovery is done by the APIs with real data.
@@ -18,10 +20,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from models.job_spec import JobSpec
 from models.candidate import Candidate, CandidateSource, RoleType
 from agents.base_agent import run_agent, PLATFORMS
-from tools import github_api, huggingface_api, arxiv_api
+from tools import github_api, huggingface_api, arxiv_api, linkedin_api
 
 SYSTEM_PROMPT = """You are a talent sourcer. You receive real candidate profiles fetched
-from GitHub, HuggingFace, and ArXiv APIs and map them to a structured format.
+from GitHub, HuggingFace, ArXiv, and LinkedIn and map them to a structured format.
 
 Your job:
 1. Select the most relevant candidates for the role from the real profiles provided
@@ -118,7 +120,7 @@ Select the top {count} most relevant and return as a JSON array:
   {{
     "name": "exact name from profile",
     "role_type": "{job_spec.role_type.value}",
-    "source": "GitHub|HuggingFace|ArXiv",
+    "source": "GitHub|HuggingFace|ArXiv|LinkedIn",
     "profile_url": "exact URL from profile",
     "headline": "factual headline from their actual bio/work",
     "location": "from profile or null",
@@ -231,19 +233,21 @@ def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]
     keywords = _keywords(job_spec)
     location = job_spec.location  # may be None
 
-    # Run all three APIs in parallel.
+    # Run all four sources in parallel.
     # Ask for a large raw pool (3-4× the final target) so the synthesis LLM
     # has real selection depth — better recall means better ranked output.
     raw_target = max(num_candidates * 3, 24)
-    with ThreadPoolExecutor(max_workers=3) as pool:
-        gh_fut = pool.submit(github_api.search_engineers, keywords, raw_target, location)
-        hf_fut = pool.submit(huggingface_api.search_practitioners, job_spec.role_type.value, num_candidates)
-        ax_fut = pool.submit(arxiv_api.search_researchers, keywords[:5], max(5, num_candidates))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        gh_fut = pool.submit(github_api.search_engineers,         keywords,                  raw_target,       location)
+        hf_fut = pool.submit(huggingface_api.search_practitioners,job_spec.role_type.value,  num_candidates)
+        ax_fut = pool.submit(arxiv_api.search_researchers,        keywords[:5],              max(5, num_candidates))
+        li_fut = pool.submit(linkedin_api.search_profiles,        keywords,                  num_candidates,   location)
         gh = gh_fut.result() or []
         hf = hf_fut.result() or []
         ax = ax_fut.result() or []
+        li = li_fut.result() or []
 
-    raw_profiles: list[dict] = gh + hf + ax
+    raw_profiles: list[dict] = gh + hf + ax + li
 
     if not raw_profiles:
         return _source_via_llm(job_spec, num_candidates)
@@ -281,14 +285,71 @@ def _source_technical(job_spec: JobSpec, num_candidates: int) -> list[Candidate]
 
 
 def _source_via_llm(job_spec: JobSpec, num_candidates: int) -> list[Candidate]:
-    """For PM and Designer roles — use LLM + Brave to search LinkedIn/Twitter/Dribbble."""
-    prompt = _llm_sourcing_prompt(job_spec, num_candidates)
-    result = run_agent(
-        system_prompt=SYSTEM_PROMPT_LLM,
-        user_message=prompt,
-        agent_name=f"Sourcing Agent ({job_spec.role_type.value})",
-    )
-    return _parse_candidates(result, job_spec)
+    """
+    For PM and Designer roles — LinkedIn Brave search first, then LLM + Brave for the rest.
+    """
+    keywords = _keywords(job_spec)
+    location = job_spec.location
+
+    # LinkedIn structured discovery (no Proxycurl needed, just Brave)
+    li_profiles = linkedin_api.search_profiles(keywords, num_candidates, location)
+
+    if li_profiles:
+        li_profiles = _annotate_location(li_profiles, location)
+        li_profiles = _sort_by_location(li_profiles)
+
+    # Fill remaining slots with LLM + Brave search
+    remaining = num_candidates - len(li_profiles)
+    llm_candidates: list[Candidate] = []
+    if remaining > 0:
+        prompt = _llm_sourcing_prompt(job_spec, remaining)
+        result = run_agent(
+            system_prompt=SYSTEM_PROMPT_LLM,
+            user_message=prompt,
+            agent_name=f"Sourcing Agent ({job_spec.role_type.value})",
+        )
+        llm_candidates = _parse_candidates(result, job_spec)
+
+    # Convert LinkedIn profiles to Candidate objects
+    li_candidates = _direct_map_linkedin(li_profiles, job_spec)
+
+    # Merge: LinkedIn first (structured real data), then LLM candidates
+    seen_names: set[str] = {c.name.lower() for c in li_candidates}
+    merged = li_candidates[:]
+    for c in llm_candidates:
+        if c.name.lower() not in seen_names:
+            merged.append(c)
+            seen_names.add(c.name.lower())
+
+    if location and merged:
+        terms = _loc_terms(location)
+        def _cand_rank(c: Candidate) -> int:
+            loc = (c.location or "").lower()
+            if not loc:
+                return 1
+            return 0 if any(t in loc for t in terms) else 2
+        merged.sort(key=_cand_rank)
+
+    return merged[:num_candidates]
+
+
+def _direct_map_linkedin(profiles: list[dict], job_spec: JobSpec) -> list[Candidate]:
+    """Map raw LinkedIn profile dicts (from linkedin_api) to Candidate objects."""
+    candidates: list[Candidate] = []
+    for p in profiles:
+        candidates.append(Candidate(
+            name=p.get("name", "Unknown"),
+            role_type=job_spec.role_type,
+            source=CandidateSource.LINKEDIN,
+            profile_url=p.get("profile_url"),
+            headline=p.get("headline"),
+            location=p.get("location"),
+            email=p.get("email") or None,
+            skills=p.get("skills", []),
+            experience_years=p.get("experience_years"),
+            notable_work=p.get("notable_work"),
+        ))
+    return candidates
 
 
 def _direct_map(raw_profiles: list[dict], job_spec: JobSpec) -> list[Candidate]:
