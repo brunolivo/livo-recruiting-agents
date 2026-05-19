@@ -1,16 +1,17 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, DM_Sans } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const dmSans = DM_Sans({ subsets: ["latin"], variable: "--font-display" });
 
 export const metadata: Metadata = {
-  title: "Livo Health — AI Recruiting",
+  title: "Livo Hunter — AI Recruiting",
   description: "AI-powered recruiting pipeline for Livo Health",
 };
 
 export const viewport: Viewport = {
-  themeColor: "#4f46e5",
+  themeColor: "#007C92",
 };
 
 export default function RootLayout({
@@ -20,7 +21,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} bg-white text-gray-900 antialiased`}>
+      <body
+        className={`${inter.variable} ${dmSans.variable} font-sans bg-[#F5F5F2] text-[#1C2631] antialiased`}
+      >
         {children}
       </body>
     </html>

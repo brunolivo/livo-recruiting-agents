@@ -11,17 +11,17 @@ interface Props {
 }
 
 const RECOMMENDATION_STYLES: Record<string, string> = {
-  "STRONG YES": "bg-green-100 text-green-800 border border-green-300",
-  YES: "bg-blue-100 text-blue-800 border border-blue-300",
-  MAYBE: "bg-yellow-100 text-yellow-800 border border-yellow-300",
-  NO: "bg-red-100 text-red-800 border border-red-300",
+  "STRONG YES": "bg-emerald-50 text-emerald-800 border border-emerald-300",
+  YES:           "bg-[#E8F4F7] text-[#007C92] border border-[#007C92]/30",
+  MAYBE:         "bg-amber-50 text-amber-800 border border-amber-300",
+  NO:            "bg-red-50 text-[#EC221F] border border-red-300",
 };
 
 export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Props) {
   const [transcript, setTranscript] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [insights, setInsights] = useState<InterviewInsights | null>(null);
-  const [error, setError] = useState("");
+  const [loading, setLoading]       = useState(false);
+  const [insights, setInsights]     = useState<InterviewInsights | null>(null);
+  const [error, setError]           = useState("");
 
   const analyze = async () => {
     if (!transcript.trim()) return;
@@ -35,7 +35,7 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           candidate_name: candidate.name,
-          transcript: transcript.trim(),
+          transcript:     transcript.trim(),
         }),
       });
 
@@ -53,8 +53,8 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
     }
   };
 
-  const rec = insights?.recommendation?.toUpperCase() ?? "";
-  const recStyle = RECOMMENDATION_STYLES[rec] ?? "bg-gray-100 text-gray-700 border border-gray-300";
+  const rec      = insights?.recommendation?.toUpperCase() ?? "";
+  const recStyle = RECOMMENDATION_STYLES[rec] ?? "bg-[#EDEDE8] text-[#405263] border border-black/10";
 
   return (
     <div
@@ -65,23 +65,23 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
     >
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-[#1C2631]/60 backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Modal card */}
-      <div className="relative z-10 w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl flex flex-col">
+      <div className="relative z-10 w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white rounded-lg shadow-[0_8px_40px_8px_rgba(0,0,0,0.18)] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-black/10 sticky top-0 bg-white rounded-t-lg">
           <div>
-            <h2 id="modal-title" className="text-lg font-semibold text-gray-900">
+            <h2 id="modal-title" className="font-display text-lg font-semibold text-[#1C2631]">
               Interview Analysis
             </h2>
-            <p className="text-sm text-indigo-600 font-medium">{candidate.name}</p>
+            <p className="text-sm text-[#007C92] font-medium">{candidate.name}</p>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            className="w-8 h-8 flex items-center justify-center rounded-full text-[#8AA3B8] hover:text-[#405263] hover:bg-[#F5F5F2] transition-colors duration-200"
             aria-label="Close modal"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -94,7 +94,7 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
         <div className="flex-1 px-6 py-5 space-y-5">
           {/* Transcript input */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label className="block text-sm font-medium text-[#1C2631] mb-1.5">
               Interview Transcript
             </label>
             <textarea
@@ -102,12 +102,12 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
               onChange={(e) => setTranscript(e.target.value)}
               placeholder="Paste interview transcript here…"
               rows={10}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-y transition"
+              className="w-full rounded-lg border border-black/10 px-3 py-2.5 text-sm text-[#1C2631] placeholder-[#8AA3B8] focus:outline-none focus:ring-2 focus:ring-[#007C92] focus:border-transparent resize-y transition-all duration-200"
             />
           </div>
 
           {error && (
-            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-[#EC221F]">
               {error}
             </div>
           )}
@@ -116,7 +116,7 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
           <button
             onClick={analyze}
             disabled={loading || !transcript.trim()}
-            className="w-full py-2.5 px-4 bg-indigo-600 text-white rounded-lg font-medium text-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+            className="w-full py-2.5 px-4 bg-[#007C92] text-white rounded-full font-medium text-sm hover:bg-[#005362] disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center gap-2"
           >
             {loading ? (
               <>
@@ -133,11 +133,11 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
 
           {/* Results */}
           {insights && (
-            <div className="space-y-5 pt-2 border-t border-gray-100">
+            <div className="space-y-5 pt-2 border-t border-black/5">
               {/* Recommendation badge */}
               {insights.recommendation && (
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-medium text-gray-600">Recommendation:</span>
+                  <span className="text-sm font-medium text-[#405263]">Recommendation:</span>
                   <span className={`px-3 py-1 rounded-full text-sm font-bold uppercase tracking-wide ${recStyle}`}>
                     {insights.recommendation}
                   </span>
@@ -146,7 +146,7 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
 
               {/* Summary */}
               {insights.summary && (
-                <p className="text-sm text-gray-700 leading-relaxed bg-gray-50 rounded-lg px-4 py-3">
+                <p className="text-sm text-[#405263] leading-relaxed bg-[#F5F5F2] rounded-lg px-4 py-3">
                   {insights.summary}
                 </p>
               )}
@@ -155,7 +155,7 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {insights.key_strengths.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-semibold text-green-700 mb-2 flex items-center gap-1.5">
+                    <h3 className="text-sm font-semibold text-[#1FC86E] mb-2 flex items-center gap-1.5">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
@@ -163,8 +163,8 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
                     </h3>
                     <ul className="space-y-1.5">
                       {insights.key_strengths.map((s, i) => (
-                        <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                        <li key={i} className="text-sm text-[#405263] flex items-start gap-2">
+                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#1FC86E] flex-shrink-0" />
                           {s}
                         </li>
                       ))}
@@ -174,7 +174,7 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
 
                 {insights.areas_of_concern.length > 0 && (
                   <div>
-                    <h3 className="text-sm font-semibold text-red-600 mb-2 flex items-center gap-1.5">
+                    <h3 className="text-sm font-semibold text-[#EC221F] mb-2 flex items-center gap-1.5">
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
                       </svg>
@@ -182,8 +182,8 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
                     </h3>
                     <ul className="space-y-1.5">
                       {insights.areas_of_concern.map((c, i) => (
-                        <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                        <li key={i} className="text-sm text-[#405263] flex items-start gap-2">
+                          <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#EC221F] flex-shrink-0" />
                           {c}
                         </li>
                       ))}
@@ -195,27 +195,27 @@ export default function InterviewModal({ candidate, jobId, apiUrl, onClose }: Pr
               {/* Technical assessment */}
               {insights.technical_assessment && (
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800 mb-1.5">Technical Assessment</h3>
-                  <p className="text-sm text-gray-700 leading-relaxed">{insights.technical_assessment}</p>
+                  <h3 className="text-sm font-semibold text-[#1C2631] mb-1.5">Technical Assessment</h3>
+                  <p className="text-sm text-[#405263] leading-relaxed">{insights.technical_assessment}</p>
                 </div>
               )}
 
               {/* Cultural fit */}
               {insights.cultural_fit_assessment && (
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800 mb-1.5">Cultural Fit</h3>
-                  <p className="text-sm text-gray-700 leading-relaxed">{insights.cultural_fit_assessment}</p>
+                  <h3 className="text-sm font-semibold text-[#1C2631] mb-1.5">Cultural Fit</h3>
+                  <p className="text-sm text-[#405263] leading-relaxed">{insights.cultural_fit_assessment}</p>
                 </div>
               )}
 
               {/* Next steps */}
               {insights.next_steps.length > 0 && (
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-800 mb-2">Suggested Next Steps</h3>
+                  <h3 className="text-sm font-semibold text-[#1C2631] mb-2">Suggested Next Steps</h3>
                   <ol className="space-y-1.5 list-none">
                     {insights.next_steps.map((step, i) => (
-                      <li key={i} className="text-sm text-gray-700 flex items-start gap-2.5">
-                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center mt-0.5">
+                      <li key={i} className="text-sm text-[#405263] flex items-start gap-2.5">
+                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#E8F4F7] text-[#007C92] text-xs font-bold flex items-center justify-center mt-0.5">
                           {i + 1}
                         </span>
                         {step}
