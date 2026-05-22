@@ -4,44 +4,60 @@ Metabase API client — queries the Livo repeaters database.
 Question 12652: "Repeaters by facility and units fields"
 URL: https://livo.metabaseapp.com/question/12652
 
-Template tag parameters:
-  livo_unit          → unit/ward filter (empty = all units)
-  professional_field → role filter (MIDWIVES, NURSES, DOCTORS, …)
-  facility_name      → facility filter
+Confirmed working parameter format (verified against live API 2026-05-22):
+  - type:   "string/="
+  - target: ["dimension", ["template-tag", "<name>"]]
+  - value:  ["value"]   ← must be an ARRAY, not a string
+  - id:     UUID from the card's parameters list (required for filtering to work)
 
-Auth options (set in .env):
-  METABASE_USERNAME + METABASE_PASSWORD → session-based auth (always works)
-  METABASE_API_KEY                      → direct API key (Metabase 47+, faster)
+Parameter IDs for card 12652:
+  professional_field  → 524b1355-7318-4675-8c82-6e188f4376af
+  facility_name       → 4dc34135-30a0-4857-b874-1ea9c8107662
+  livo_unit           → 550dd952-1569-453a-ae49-48e8d884dd56
 
-Set METABASE_URL if your instance is not at https://livo.metabaseapp.com.
+Response columns (flat JSON array from /query/json):
+  professional_id, first_name, last_name, phone_number,
+  total_shifts, first_shift, last_shift
+
+Auth: METABASE_USERNAME + METABASE_PASSWORD in .env (session-based)
+      or METABASE_API_KEY (Metabase 47+)
 """
 
 import os
-import httpx
+import json
+import ssl
+import urllib.request
+import urllib.error
 from typing import Optional
 
-METABASE_URL      = os.getenv("METABASE_URL", "https://livo.metabaseapp.com")
-METABASE_USER     = os.getenv("METABASE_USERNAME", "")
-METABASE_PASS     = os.getenv("METABASE_PASSWORD", "")
-METABASE_API_KEY  = os.getenv("METABASE_API_KEY", "")
+METABASE_URL     = os.getenv("METABASE_URL", "https://livo.metabaseapp.com")
+METABASE_USER    = os.getenv("METABASE_USERNAME", "")
+METABASE_PASS    = os.getenv("METABASE_PASSWORD", "")
+METABASE_API_KEY = os.getenv("METABASE_API_KEY", "")
 
 REPEATERS_CARD_ID = 12652
 
-# Cache the session token for the lifetime of the process
+# Confirmed parameter UUIDs for card 12652 (from /api/card/12652 metadata)
+_PARAM_IDS = {
+    "professional_field": "524b1355-7318-4675-8c82-6e188f4376af",
+    "facility_name":      "4dc34135-30a0-4857-b874-1ea9c8107662",
+    "livo_unit":          "550dd952-1569-453a-ae49-48e8d884dd56",
+}
+
+_ssl_ctx = ssl.create_default_context()
+
+# Session token cache
 _session_token: Optional[str] = None
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 def _get_headers() -> dict:
-    """Return auth headers. API key takes priority over session token."""
     if METABASE_API_KEY:
         return {"X-API-Key": METABASE_API_KEY, "Content-Type": "application/json"}
-
     token = _get_session_token()
     if token:
         return {"X-Metabase-Session": token, "Content-Type": "application/json"}
-
     return {"Content-Type": "application/json"}
 
 
@@ -52,17 +68,24 @@ def _get_session_token() -> Optional[str]:
     if not METABASE_USER or not METABASE_PASS:
         return None
     try:
-        r = httpx.post(
+        payload = json.dumps({"username": METABASE_USER, "password": METABASE_PASS}).encode()
+        req = urllib.request.Request(
             f"{METABASE_URL}/api/session",
-            json={"username": METABASE_USER, "password": METABASE_PASS},
-            timeout=15,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
         )
-        if r.status_code == 200:
-            _session_token = r.json().get("id")
+        with urllib.request.urlopen(req, timeout=15, context=_ssl_ctx) as resp:
+            _session_token = json.loads(resp.read().decode()).get("id")
             return _session_token
     except Exception:
-        pass
-    return None
+        return None
+
+
+def _reset_session():
+    """Force re-authentication on next call (call if we get a 401)."""
+    global _session_token
+    _session_token = None
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -73,139 +96,129 @@ def query_repeaters(
     unit: str = "",
 ) -> list[dict]:
     """
-    Query the repeaters question (card 12652) filtered by facility, role, and unit.
-    Returns a list of professional profile dicts with normalised keys.
+    Query card 12652 (repeaters) filtered by facility, professional field, and optional unit.
+    Returns normalised list of professional profile dicts.
 
-    Falls back to an empty list if Metabase credentials are not configured.
+    Returns [] if Metabase credentials are not configured.
     """
     if not METABASE_API_KEY and not (METABASE_USER and METABASE_PASS):
-        # Return empty — pipeline will fall back to LLM-based sourcing
         return []
 
-    raw_rows = _run_card(
-        card_id=REPEATERS_CARD_ID,
+    raw = _run_card(
         facility_name=facility_name,
         professional_field=professional_field,
         unit=unit,
     )
-    return raw_rows
+    return _normalise(raw)
 
 
-def _run_card(
-    card_id: int,
+# ── Internal ──────────────────────────────────────────────────────────────────
+
+def _build_parameters(
     facility_name: str,
     professional_field: str,
     unit: str,
 ) -> list[dict]:
-    """POST /api/card/{id}/query with template-tag parameters."""
-    parameters = [
-        {
-            "type":   "category",
-            "target": ["variable", ["template-tag", "professional_field"]],
-            "value":  professional_field or None,
-        },
-        {
-            "type":   "category",
-            "target": ["variable", ["template-tag", "facility_name"]],
-            "value":  facility_name or None,
-        },
-        {
-            "type":   "category",
-            "target": ["variable", ["template-tag", "livo_unit"]],
-            "value":  unit or None,
-        },
-    ]
+    """
+    Build the parameters array for the Metabase card query.
+
+    Rules (confirmed by live testing):
+    - type must be "string/="
+    - target must be ["dimension", ["template-tag", "<name>"]]
+    - value must be a LIST (array), not a plain string
+    - id must be the UUID from the card's parameters list
+    - Only include a parameter if it has a non-empty value
+      (omitting it lets the [[AND {{tag}}]] block be skipped = no filter)
+    """
+    params = []
+
+    if professional_field:
+        params.append({
+            "type":   "string/=",
+            "id":     _PARAM_IDS["professional_field"],
+            "target": ["dimension", ["template-tag", "professional_field"]],
+            "value":  [professional_field],
+        })
+
+    if facility_name:
+        params.append({
+            "type":   "string/=",
+            "id":     _PARAM_IDS["facility_name"],
+            "target": ["dimension", ["template-tag", "facility_name"]],
+            "value":  [facility_name],
+        })
+
+    if unit:
+        params.append({
+            "type":   "string/=",
+            "id":     _PARAM_IDS["livo_unit"],
+            "target": ["dimension", ["template-tag", "livo_unit"]],
+            "value":  [unit],
+        })
+
+    return params
+
+
+def _run_card(
+    facility_name: str,
+    professional_field: str,
+    unit: str,
+    retry: bool = True,
+) -> list[dict]:
+    """POST /api/card/{id}/query/json — synchronous, returns flat JSON array."""
+    parameters = _build_parameters(facility_name, professional_field, unit)
+    body = json.dumps({"ignore_cache": False, "parameters": parameters}).encode()
+
+    headers = _get_headers()
+    req = urllib.request.Request(
+        f"{METABASE_URL}/api/card/{REPEATERS_CARD_ID}/query/json",
+        data=body,
+        headers=headers,
+        method="POST",
+    )
 
     try:
-        r = httpx.post(
-            f"{METABASE_URL}/api/card/{card_id}/query",
-            headers=_get_headers(),
-            json={"ignore_cache": False, "parameters": parameters},
-            timeout=30,
-        )
-        if r.status_code != 202 and r.status_code != 200:
-            return []
-        return _parse_response(r.json())
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and retry:
+            # Session expired — re-authenticate and try once more
+            _reset_session()
+            return _run_card(facility_name, professional_field, unit, retry=False)
+        return []
     except Exception:
         return []
 
 
-def _parse_response(response: dict) -> list[dict]:
+def _normalise(rows: list[dict]) -> list[dict]:
     """
-    Convert Metabase query response into a list of normalised dicts.
+    Convert raw Metabase rows into the standard profile dict format
+    used throughout the pipeline.
 
-    Metabase returns:
-      data.cols  → list of {"name": "column_name", ...}
-      data.rows  → list of row arrays (values in same order as cols)
+    Raw columns: professional_id, first_name, last_name, phone_number,
+                 total_shifts, first_shift, last_shift
     """
-    try:
-        data = response.get("data", {})
-        cols = [c.get("name", "").lower() for c in data.get("cols", [])]
-        rows = data.get("rows", [])
-    except Exception:
-        return []
-
-    if not cols or not rows:
-        return []
-
-    # Column name aliases → normalised key
-    col_aliases = {
-        # name variants
-        "name": "name", "professional_name": "name", "nombre": "name",
-        "full_name": "name", "professional": "name",
-        # id
-        "id": "professional_id", "professional_id": "professional_id",
-        "worker_id": "professional_id", "user_id": "professional_id",
-        # phone
-        "phone": "phone", "telefono": "phone", "móvil": "phone",
-        "phone_number": "phone", "mobile": "phone",
-        # email
-        "email": "email", "correo": "email",
-        # facility
-        "facility_name": "facility_name", "center": "facility_name",
-        "hospital": "facility_name", "centro": "facility_name",
-        # unit
-        "unit": "unit", "livo_unit": "unit", "ward": "unit",
-        "planta": "unit", "servicio": "unit",
-        # shifts at facility
-        "shifts_at_facility": "shifts_at_facility",
-        "facility_shifts": "shifts_at_facility",
-        "count": "shifts_at_facility",
-        "shift_count": "shifts_at_facility",
-        "num_shifts": "shifts_at_facility",
-        "total": "shifts_at_facility",
-        "repeater_count": "shifts_at_facility",
-        # total shifts
-        "total_shifts": "total_shifts",
-        # last shift
-        "last_shift": "last_shift_date", "last_shift_date": "last_shift_date",
-        "last_date": "last_shift_date", "ultima_guardia": "last_shift_date",
-        # role
-        "professional_field": "role", "field": "role",
-        "speciality": "role", "especialidad": "role",
-    }
-
     profiles: list[dict] = []
     for row in rows:
-        profile: dict = {}
-        for i, val in enumerate(row):
-            if i >= len(cols):
-                break
-            col = cols[i]
-            norm_key = col_aliases.get(col, col)
-            profile[norm_key] = val
-
-        # Must have a name to be useful
-        if not profile.get("name"):
+        first = (row.get("first_name") or "").strip()
+        last  = (row.get("last_name")  or "").strip()
+        name  = f"{first} {last}".strip()
+        if not name:
             continue
 
-        # Coerce shift counts to int
-        for key in ("shifts_at_facility", "shifts_in_unit", "total_shifts"):
-            try:
-                profile[key] = int(profile.get(key) or 0)
-            except (ValueError, TypeError):
-                profile[key] = 0
+        # Extract date part from ISO datetime  "2026-05-31T12:00:00" → "2026-05-31"
+        last_shift_raw = row.get("last_shift") or ""
+        last_shift_date = str(last_shift_raw)[:10] if last_shift_raw else ""
 
-        profiles.append(profile)
+        profiles.append({
+            "name":               name,
+            "professional_id":    str(row.get("professional_id") or ""),
+            "phone":              row.get("phone_number") or None,
+            "email":              row.get("email") or None,
+            "shifts_at_facility": int(row.get("total_shifts") or 0),
+            "shifts_in_unit":     0,   # card doesn't break out unit count
+            "total_shifts":       int(row.get("total_shifts") or 0),
+            "last_shift_date":    last_shift_date,
+        })
 
     return profiles
