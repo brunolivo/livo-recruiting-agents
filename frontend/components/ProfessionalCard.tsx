@@ -30,18 +30,6 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
-function ScoreBar({ label, value }: { label: string; value: number }) {
-  const color = value >= 7 ? "bg-livo-success" : value >= 5 ? "bg-livo-warning" : "bg-livo-danger";
-  return (
-    <div className="flex items-center gap-2 min-w-0">
-      <span className="text-xs text-livo-text-muted w-20 flex-shrink-0">{label}</span>
-      <div className="flex-1 h-1.5 bg-livo-bg-secondary rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color} transition-all duration-200`} style={{ width: `${value * 10}%` }} />
-      </div>
-      <span className="text-xs font-semibold text-livo-text-secondary w-6 text-right">{value.toFixed(1)}</span>
-    </div>
-  );
-}
 
 export default function ProfessionalCard({ professional: p, shift, listView }: Props) {
   const [msgOpen,  setMsgOpen]  = useState(false);
@@ -139,12 +127,6 @@ export default function ProfessionalCard({ professional: p, shift, listView }: P
           </div>
           <ScoreRing score={p.fit_score} />
         </div>
-      </div>
-
-      {/* Score bars */}
-      <div className="px-5 py-2.5 bg-livo-bg-page border-y border-black/5 space-y-1.5">
-        <ScoreBar label="Experiencia" value={p.experience_score} />
-        <ScoreBar label="Disponibilidad" value={p.availability_score} />
       </div>
 
       {/* Shift history */}
