@@ -26,6 +26,8 @@ from pydantic import BaseModel
 
 from models.candidate import RoleType
 from pipeline import run_pipeline, run_interview_analysis, PipelineResult
+from pipeline_shift import run_shift_pipeline
+from models.shift import ShiftPipelineResult
 
 app = FastAPI(
     title="Livo Health Recruiting Agents",
@@ -57,6 +59,13 @@ class RunRequest(BaseModel):
 class InterviewRequest(BaseModel):
     candidate_name: str
     transcript: str
+
+
+class ShiftRequest(BaseModel):
+    shift_description: str          # "Matrona dia 22 a las 20h20 a las 08am turno de 12 horas"
+    facility_name: str              # "Hospital General de Catalunya"
+    unit: str = ""                  # "Maternidad" — optional
+    num_professionals: int = 15
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -208,3 +217,97 @@ async def analyze_interview(job_id: str, request: InterviewRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok", "cached_results": len(_results)}
+
+
+# ── Shift staffing endpoints ───────────────────────────────────────────────────
+
+async def _stream_shift_pipeline(request: ShiftRequest):
+    """SSE stream for the shift staffing pipeline."""
+    import uuid, asyncio
+    job_id = str(uuid.uuid4())
+    progress_queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()
+
+    yield _sse("started", {"job_id": job_id, "status": "running"})
+
+    def on_progress(stage: str, msg: str):
+        loop.call_soon_threadsafe(progress_queue.put_nowait, {"stage": stage, "message": msg})
+
+    async def run_in_background():
+        return await asyncio.to_thread(
+            run_shift_pipeline,
+            request.shift_description,
+            request.facility_name,
+            request.unit,
+            request.num_professionals,
+            on_progress,
+        )
+
+    pipeline_task = asyncio.create_task(run_in_background())
+
+    while not pipeline_task.done():
+        try:
+            event = await asyncio.wait_for(progress_queue.get(), timeout=0.5)
+            yield _sse("progress", event)
+        except asyncio.TimeoutError:
+            yield _sse("ping", {})
+
+    while not progress_queue.empty():
+        yield _sse("progress", progress_queue.get_nowait())
+
+    try:
+        result: ShiftPipelineResult = pipeline_task.result()
+        yield _sse("done", {
+            "job_id":        job_id,
+            "stats":         result.stats,
+            "shift":         result.shift.model_dump(),
+            "professionals": [p.model_dump() for p in result.professionals],
+        })
+    except Exception as e:
+        yield _sse("error", {"job_id": job_id, "error": str(e)})
+
+
+@app.post("/shift/run")
+async def shift_run_streaming(request: ShiftRequest):
+    """
+    Start the shift staffing pipeline and stream progress as Server-Sent Events.
+    Events: started → progress (many) → ping → done | error
+    """
+    return StreamingResponse(
+        _stream_shift_pipeline(request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/shift/run/sync")
+async def shift_run_sync(request: ShiftRequest):
+    """Run the shift staffing pipeline synchronously. Returns full JSON."""
+    import uuid, asyncio, traceback
+    job_id = str(uuid.uuid4())
+    progress_log: list[str] = []
+
+    def on_progress(stage: str, msg: str):
+        progress_log.append(f"[{stage.upper()}] {msg}")
+
+    try:
+        result: ShiftPipelineResult = await asyncio.to_thread(
+            run_shift_pipeline,
+            request.shift_description,
+            request.facility_name,
+            request.unit,
+            request.num_professionals,
+            on_progress,
+        )
+        return {
+            "job_id":        job_id,
+            "status":        "done",
+            "shift":         result.shift.model_dump(),
+            "stats":         result.stats,
+            "progress_log":  progress_log,
+            "professionals": [p.model_dump() for p in result.professionals],
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        return {"job_id": job_id, "status": "failed", "error": str(e),
+                "traceback": tb, "progress_log": progress_log}

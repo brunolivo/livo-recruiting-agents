@@ -1,3 +1,5 @@
+// ── AI Recruiting (legacy) ─────────────────────────────────────────────────
+
 export interface Candidate {
   name: string;
   role_type: string;
@@ -42,4 +44,52 @@ export interface InterviewInsights {
   recommendation?: string;
   next_steps: string[];
   summary?: string;
+}
+
+// ── Healthcare Shift Staffing ──────────────────────────────────────────────
+
+export interface Shift {
+  role: string;
+  facility_name: string;
+  unit?: string;
+  date_str: string;
+  start_time: string;
+  end_time: string;
+  duration_hours: number;
+  notes?: string;
+  raw_description?: string;
+  display_time: string;
+  display_label: string;
+}
+
+export interface HealthcareProfessional {
+  name: string;
+  role: string;
+  source: string;
+  professional_id?: string;
+  phone?: string;
+  email?: string;
+  facility_name?: string;
+  unit?: string;
+  shifts_at_facility: number;
+  shifts_in_unit: number;
+  total_shifts: number;
+  last_shift_date?: string;
+  location?: string;
+  // Scored fields
+  availability_score: number;
+  experience_score: number;
+  fit_score: number;
+  scoring_rationale?: string;
+  recommended: boolean;
+  // Outreach
+  message_body?: string;
+  contact_channel: string;
+}
+
+export interface ShiftStats {
+  sourced: number;
+  scored: number;
+  recommended: number;
+  contacted: number;
 }

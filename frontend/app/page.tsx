@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import type { Candidate, PipelineStats } from "@/lib/types";
-import CandidateCard from "@/components/CandidateCard";
+import type { HealthcareProfessional, Shift, ShiftStats } from "@/lib/types";
+import ProfessionalCard from "@/components/ProfessionalCard";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "https://recruitingagents.vercel.app";
@@ -10,10 +10,10 @@ const API_URL =
 type View = "form" | "running" | "results";
 
 interface FormData {
-  description: string;
-  role_type: string;
-  num_candidates: number;
-  location: string;
+  shift_description: string;
+  facility_name: string;
+  unit: string;
+  num_professionals: number;
 }
 
 interface ProgressEntry {
@@ -22,38 +22,29 @@ interface ProgressEntry {
 }
 
 const ROLE_OPTIONS = [
-  { value: "AI Engineer",         icon: "⚙️", desc: "LLMs, RAG, MLOps, production AI" },
-  { value: "Data Scientist",      icon: "📊", desc: "ML models, forecasting, analytics" },
-  { value: "AI Product Manager",  icon: "🎯", desc: "AI strategy & product roadmap" },
-  { value: "AI Designer",         icon: "🎨", desc: "Human-AI interaction design" },
+  { value: "Matrona dia 22 a las 20h20 a las 08am turno de 12 horas", label: "Matrona · 12h noche", icon: "👩‍⚕️" },
+  { value: "Enfermero/a día 22 turno de mañana de 07h a 15h",         label: "Enfermera/o · Mañana", icon: "🏥" },
+  { value: "Médico/a urgencias día 22 de 22h a 08h turno 10 horas",   label: "Médico/a · Urgencias", icon: "🩺" },
+  { value: "Técnico/a día 22 turno tarde de 15h a 22h",               label: "Técnico/a · Tarde", icon: "🔬" },
 ];
-
-const EXAMPLE_PROMPTS: Record<string, { label: string; text: string }[]> = {
-  "AI Engineer": [
-    { label: "Senior LLM engineer", text: "Senior AI engineer with 5+ years experience building LLM-powered products. Strong in Python, RAG pipelines, and deploying models to production. Healthcare or regulated industry background is a plus." },
-    { label: "MLOps / infra",        text: "MLOps engineer who can own our model deployment infrastructure. Experience with model serving, monitoring, and CI/CD for ML. PyTorch and HuggingFace ecosystem." },
-    { label: "NLP specialist",       text: "NLP engineer specialising in text classification, entity extraction, and fine-tuning transformer models. Experience with clinical or medical text is highly valued." },
-  ],
-  "Data Scientist": [
-    { label: "Applied ML scientist", text: "Applied data scientist with strong ML fundamentals — forecasting, classification, and experimentation. Experience in healthcare data or marketplace dynamics preferred." },
-    { label: "Demand forecasting",   text: "Data scientist with deep experience in demand forecasting and time-series modelling. Comfortable owning end-to-end: from data cleaning to model deployment." },
-  ],
-  "AI Product Manager": [
-    { label: "AI PM – growth stage", text: "AI Product Manager who has shipped LLM-powered features in a fast-moving startup. Comfortable writing prompts, reading model evals, and aligning engineering and business goals." },
-    { label: "Healthcare tech PM",   text: "Product Manager with experience in healthcare SaaS or staffing technology. Strong data intuition and track record of driving adoption of AI features." },
-  ],
-  "AI Designer": [
-    { label: "AI UX designer", text: "UX designer who has designed interfaces for AI-assisted workflows — chatbots, recommendation systems, or automated scheduling. Strong in Figma and user research." },
-  ],
-};
 
 const PIPELINE_STAGES = [
-  { key: "job_spec",    label: "Job Spec"   },
-  { key: "sourcing",   label: "Sourcing"   },
-  { key: "enrichment", label: "Enrichment" },
-  { key: "scoring",    label: "Scoring"    },
-  { key: "outreach",   label: "Outreach"   },
+  { key: "parse",    label: "Analizar turno"  },
+  { key: "sourcing", label: "Buscar perfiles" },
+  { key: "scoring",  label: "Puntuar"         },
+  { key: "outreach", label: "Mensajes"        },
 ];
+
+const STAGE_COLORS: Record<string, string> = {
+  parse:    "bg-livo-primary-light text-livo-primary",
+  sourcing: "bg-blue-50 text-blue-700",
+  scoring:  "bg-amber-50 text-amber-700",
+  outreach: "bg-emerald-50 text-emerald-700",
+};
+
+function getStageBadge(stage: string) {
+  return STAGE_COLORS[stage.toLowerCase()] ?? "bg-livo-bg-secondary text-livo-text-secondary";
+}
 
 function StageStatus({
   stage, currentStage, completedStages,
@@ -71,7 +62,7 @@ function StageStatus({
         isActive ? "bg-livo-primary ring-4 ring-livo-primary-light" :
                    "bg-livo-bg-secondary"
       }`} />
-      <span className={`text-xs font-medium hidden sm:block ${
+      <span className={`text-xs font-medium hidden sm:block text-center leading-tight ${
         isDone   ? "text-livo-success" :
         isActive ? "text-livo-primary" :
                    "text-livo-text-muted"
@@ -82,59 +73,57 @@ function StageStatus({
   );
 }
 
-const STAGE_COLORS: Record<string, string> = {
-  job_spec:    "bg-livo-primary-light text-livo-primary",
-  sourcing:    "bg-blue-50 text-blue-700",
-  enrichment:  "bg-cyan-50 text-cyan-700",
-  scoring:     "bg-amber-50 text-amber-700",
-  outreach:    "bg-emerald-50 text-emerald-700",
-};
-function getStageBadge(stage: string) {
-  return STAGE_COLORS[stage.toLowerCase()] ?? "bg-livo-bg-secondary text-livo-text-secondary";
-}
-
 export default function Home() {
-  const [view, setView]             = useState<View>("form");
-  const [formData, setFormData]     = useState<FormData>({ description: "", role_type: "AI Engineer", num_candidates: 8, location: "" });
+  const [view, setView]           = useState<View>("form");
+  const [formData, setFormData]   = useState<FormData>({
+    shift_description: "",
+    facility_name: "Hospital General de Catalunya",
+    unit: "",
+    num_professionals: 15,
+  });
   const [progressLog, setProgressLog]         = useState<ProgressEntry[]>([]);
   const [currentStage, setCurrentStage]       = useState("");
   const [completedStages, setCompletedStages] = useState<Set<string>>(new Set());
-  const [jobId, setJobId]       = useState("");
-  const [stats, setStats]       = useState<PipelineStats | null>(null);
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [error, setError]       = useState("");
-  const logEndRef               = useRef<HTMLDivElement>(null);
+  const [shift, setShift]                     = useState<Shift | null>(null);
+  const [stats, setStats]                     = useState<ShiftStats | null>(null);
+  const [professionals, setProfessionals]     = useState<HealthcareProfessional[]>([]);
+  const [error, setError]                     = useState("");
+  const logEndRef                             = useRef<HTMLDivElement>(null);
 
-  const [starred, setStarred]                     = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode]                   = useState<"grid" | "list">("grid");
   const [filterRecommended, setFilterRecommended] = useState(false);
-  const [filterStarred, setFilterStarred]         = useState(false);
-  const [filterSource, setFilterSource]           = useState("all");
   const [filterMinScore, setFilterMinScore]       = useState(0);
+  const [viewMode, setViewMode]                   = useState<"grid" | "list">("grid");
 
   useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [progressLog]);
 
   const runPipeline = async () => {
+    if (!formData.shift_description.trim() || !formData.facility_name.trim()) return;
     setView("running");
     setProgressLog([]); setCompletedStages(new Set()); setCurrentStage("");
-    setError(""); setJobId(""); setStats(null); setCandidates([]);
+    setError(""); setShift(null); setStats(null); setProfessionals([]);
 
     let res: Response;
     try {
-      res = await fetch(`${API_URL}/run`, {
+      res = await fetch(`${API_URL}/shift/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...formData, location: formData.location.trim() || undefined }),
+        body: JSON.stringify({
+          shift_description:  formData.shift_description,
+          facility_name:      formData.facility_name,
+          unit:               formData.unit.trim(),
+          num_professionals:  formData.num_professionals,
+        }),
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect to the API. Please try again.");
+      setError(err instanceof Error ? err.message : "Error conectando con la API.");
       setView("form"); return;
     }
-    if (!res.ok) { setError(`API error: HTTP ${res.status}`); setView("form"); return; }
+    if (!res.ok) { setError(`Error API: HTTP ${res.status}`); setView("form"); return; }
 
-    const reader = res.body!.getReader();
+    const reader  = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "", currentEvent = "";
+
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -146,128 +135,143 @@ export default function Home() {
           else if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (currentEvent === "started")  { setJobId(data.job_id ?? ""); }
               if (currentEvent === "progress") {
                 const stage = (data.stage ?? "").toLowerCase();
                 setCurrentStage(stage);
                 setProgressLog((prev) => [...prev, { stage, message: data.message ?? "" }]);
                 const idx = PIPELINE_STAGES.findIndex((s) => s.key === stage);
-                if (idx > 0) setCompletedStages((prev) => { const n = new Set(prev); PIPELINE_STAGES.slice(0, idx).forEach((s) => n.add(s.key)); return n; });
+                if (idx > 0) setCompletedStages((prev) => {
+                  const n = new Set(prev);
+                  PIPELINE_STAGES.slice(0, idx).forEach((s) => n.add(s.key));
+                  return n;
+                });
               }
               if (currentEvent === "done") {
-                setStats(data.stats ?? null); setCandidates(data.candidates ?? []);
-                setCompletedStages(new Set(PIPELINE_STAGES.map((s) => s.key))); setView("results");
+                setShift(data.shift ?? null);
+                setStats(data.stats ?? null);
+                setProfessionals(data.professionals ?? []);
+                setCompletedStages(new Set(PIPELINE_STAGES.map((s) => s.key)));
+                setView("results");
               }
-              if (currentEvent === "error") { setError(data.error ?? "An unknown error occurred."); }
+              if (currentEvent === "error") { setError(data.error ?? "Error desconocido."); }
             } catch { /* skip */ }
             currentEvent = "";
           }
         }
       }
-    } catch (err) { setError(err instanceof Error ? err.message : "Stream interrupted unexpectedly."); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Stream interrumpido.");
+    }
   };
 
-  // ─── FORM VIEW ───────────────────────────────────────────────────────────
+  // ─── FORM VIEW ─────────────────────────────────────────────────────────────
   if (view === "form") {
-    const examples = EXAMPLE_PROMPTS[formData.role_type] ?? [];
     return (
       <main className="min-h-screen bg-livo-bg-page flex flex-col items-center px-4 py-12">
         <div className="w-full max-w-2xl">
+
+          {/* Header */}
           <div className="text-center mb-8">
             <div className="inline-flex items-center gap-2 bg-livo-primary text-white px-4 py-1.5 rounded-full text-sm font-semibold mb-5">
               <span className="w-2 h-2 bg-white rounded-full animate-pulse" />
-              Livo Hunter
+              Livo Hunter · Turnos Críticos
             </div>
             <h1 className="font-display text-4xl font-semibold text-livo-slate tracking-tight leading-tight">
-              Find your next<br />
-              <span className="text-livo-primary">AI hire</span>
+              Cubre tu turno urgente<br />
+              <span className="text-livo-primary">en minutos</span>
             </h1>
             <p className="text-sm text-livo-text-muted mt-3 max-w-md mx-auto leading-relaxed">
-              Describe the role and we&apos;ll search GitHub, HuggingFace, and ArXiv for real candidates — scored, ranked, and outreach-ready.
+              Introduce el turno y el centro — buscamos en la base de datos de repetidores,
+              puntuamos por historial y generamos mensajes de WhatsApp personalizados en español.
             </p>
           </div>
 
           <div className="bg-white rounded-lg shadow-card border border-black/10 p-8 space-y-6">
-            {/* Role type */}
+
+            {/* Quick fill examples */}
             <div>
-              <label className="block text-sm font-semibold text-livo-slate mb-3">What role are you hiring for?</label>
-              <div className="grid grid-cols-2 gap-3">
-                {ROLE_OPTIONS.map((role) => {
-                  const selected = formData.role_type === role.value;
-                  return (
-                    <button key={role.value} type="button"
-                      onClick={() => setFormData((f) => ({ ...f, role_type: role.value }))}
-                      className={`text-left p-4 rounded-lg border-2 transition-all duration-200 ${
-                        selected ? "border-livo-primary bg-livo-primary-light" : "border-black/10 hover:border-livo-primary/30 hover:bg-livo-bg-page"
-                      }`}>
-                      <div className="text-2xl mb-1">{role.icon}</div>
-                      <div className={`text-sm font-semibold ${selected ? "text-livo-primary" : "text-livo-slate"}`}>{role.value}</div>
-                      <div className="text-xs text-livo-text-muted mt-0.5">{role.desc}</div>
-                    </button>
-                  );
-                })}
+              <label className="block text-sm font-semibold text-livo-slate mb-3">
+                Plantillas rápidas
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {ROLE_OPTIONS.map((opt) => (
+                  <button key={opt.label} type="button"
+                    onClick={() => setFormData((f) => ({ ...f, shift_description: opt.value }))}
+                    className={`text-left p-3 rounded-lg border-2 transition-all duration-200 ${
+                      formData.shift_description === opt.value
+                        ? "border-livo-primary bg-livo-primary-light"
+                        : "border-black/10 hover:border-livo-primary/30 hover:bg-livo-bg-page"
+                    }`}>
+                    <div className="text-xl mb-0.5">{opt.icon}</div>
+                    <div className={`text-xs font-semibold ${formData.shift_description === opt.value ? "text-livo-primary" : "text-livo-slate"}`}>
+                      {opt.label}
+                    </div>
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Location */}
+            {/* Shift description */}
             <div>
-              <label htmlFor="location" className="block text-sm font-semibold text-livo-slate mb-1.5">
-                Location
-                <span className="ml-1.5 text-xs font-normal text-livo-text-muted">optional — leave blank for global search</span>
+              <label htmlFor="shift_description" className="block text-sm font-semibold text-livo-slate mb-1.5">
+                Descripción del turno
+                <span className="ml-1.5 text-xs font-normal text-livo-text-muted">texto libre</span>
               </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-livo-text-muted text-base">📍</span>
-                <input id="location" type="text" value={formData.location}
-                  onChange={(e) => setFormData((f) => ({ ...f, location: e.target.value }))}
-                  placeholder="Barcelona, Spain"
-                  className="w-full rounded-lg border border-black/10 pl-9 pr-4 py-3 text-sm text-livo-slate placeholder-livo-text-muted focus:outline-none focus:ring-2 focus:ring-livo-primary focus:border-transparent transition-all duration-200"
+              <textarea id="shift_description" value={formData.shift_description}
+                onChange={(e) => setFormData((f) => ({ ...f, shift_description: e.target.value }))}
+                placeholder={"Ejemplo: Matrona dia 22 a las 20h20 a las 08am turno de 12 horas"}
+                rows={3}
+                className="w-full rounded-lg border border-black/10 px-4 py-3 text-sm text-livo-slate placeholder-livo-text-muted focus:outline-none focus:ring-2 focus:ring-livo-primary focus:border-transparent resize-none transition-all duration-200"
+              />
+            </div>
+
+            {/* Facility + Unit */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="facility_name" className="block text-sm font-semibold text-livo-slate mb-1.5">
+                  Centro
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-livo-text-muted">🏥</span>
+                  <input id="facility_name" type="text" value={formData.facility_name}
+                    onChange={(e) => setFormData((f) => ({ ...f, facility_name: e.target.value }))}
+                    placeholder="Hospital General de Catalunya"
+                    className="w-full rounded-lg border border-black/10 pl-9 pr-4 py-3 text-sm text-livo-slate placeholder-livo-text-muted focus:outline-none focus:ring-2 focus:ring-livo-primary focus:border-transparent transition-all duration-200"
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="unit" className="block text-sm font-semibold text-livo-slate mb-1.5">
+                  Unidad
+                  <span className="ml-1 text-xs font-normal text-livo-text-muted">opcional</span>
+                </label>
+                <input id="unit" type="text" value={formData.unit}
+                  onChange={(e) => setFormData((f) => ({ ...f, unit: e.target.value }))}
+                  placeholder="Maternidad, UCI, Urgencias…"
+                  className="w-full rounded-lg border border-black/10 px-4 py-3 text-sm text-livo-slate placeholder-livo-text-muted focus:outline-none focus:ring-2 focus:ring-livo-primary focus:border-transparent transition-all duration-200"
                 />
               </div>
             </div>
 
-            {/* Job description */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="description" className="block text-sm font-semibold text-livo-slate">Role description</label>
-                <span className="text-xs text-livo-text-muted">Be specific — skills, seniority, domain</span>
-              </div>
-              {examples.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {examples.map((ex) => (
-                    <button key={ex.label} type="button"
-                      onClick={() => setFormData((f) => ({ ...f, description: ex.text }))}
-                      className="text-xs px-3 py-1.5 rounded-full border border-livo-primary/30 bg-livo-primary-light text-livo-primary hover:bg-livo-primary/20 transition-colors duration-200 font-medium">
-                      {ex.label} ↗
-                    </button>
-                  ))}
-                </div>
-              )}
-              <textarea id="description" value={formData.description}
-                onChange={(e) => setFormData((f) => ({ ...f, description: e.target.value }))}
-                placeholder={`Example: "Senior AI engineer with 4+ years experience building LLM-powered products. Strong Python and RAG skills. Healthcare or regulated industry background preferred."\n\nTips:\n• Include seniority (junior / mid / senior / staff)\n• Mention must-have skills vs nice-to-haves\n• Add domain context (healthcare, fintech, …)\n• Specify remote / hybrid / on-site`}
-                rows={7}
-                className="w-full rounded-lg border border-black/10 px-4 py-3 text-sm text-livo-slate placeholder-livo-text-muted focus:outline-none focus:ring-2 focus:ring-livo-primary focus:border-transparent resize-none transition-all duration-200 leading-relaxed"
-              />
-            </div>
-
-            {/* Num candidates + sources */}
+            {/* Num professionals */}
             <div className="flex items-center justify-between gap-4">
               <div>
-                <label htmlFor="num_candidates" className="block text-xs font-semibold text-livo-text-muted uppercase tracking-wide mb-1.5">Candidates</label>
+                <label htmlFor="num_professionals" className="block text-xs font-semibold text-livo-text-muted uppercase tracking-wide mb-1.5">
+                  Profesionales a contactar
+                </label>
                 <div className="flex items-center gap-2">
-                  <input id="num_candidates" type="number" min={3} max={15} value={formData.num_candidates}
-                    onChange={(e) => setFormData((f) => ({ ...f, num_candidates: Math.max(3, Math.min(15, parseInt(e.target.value) || 8)) }))}
+                  <input id="num_professionals" type="number" min={5} max={30} value={formData.num_professionals}
+                    onChange={(e) => setFormData((f) => ({ ...f, num_professionals: Math.max(5, Math.min(30, parseInt(e.target.value) || 15)) }))}
                     className="w-20 rounded-lg border border-black/10 px-3 py-2 text-sm text-center font-semibold text-livo-slate focus:outline-none focus:ring-2 focus:ring-livo-primary focus:border-transparent"
                   />
-                  <span className="text-xs text-livo-text-muted">3–15</span>
+                  <span className="text-xs text-livo-text-muted">5–30</span>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-xs font-semibold text-livo-text-muted uppercase tracking-wide mb-1.5">Searches</p>
+                <p className="text-xs font-semibold text-livo-text-muted uppercase tracking-wide mb-1.5">Fuente</p>
                 <div className="flex items-center gap-1.5 justify-end">
-                  {["GitHub", "HuggingFace", "ArXiv"].map((src) => (
-                    <span key={src} className="text-xs px-2 py-1 rounded-md bg-livo-bg-secondary text-livo-text-secondary font-medium">{src}</span>
-                  ))}
+                  <span className="text-xs px-2 py-1 rounded-md bg-livo-bg-secondary text-livo-text-secondary font-medium">Metabase</span>
+                  <span className="text-xs px-2 py-1 rounded-md bg-livo-bg-secondary text-livo-text-secondary font-medium">Repetidores</span>
                 </div>
               </div>
             </div>
@@ -276,9 +280,10 @@ export default function Home() {
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-livo-danger">{error}</div>
             )}
 
-            <button onClick={runPipeline} disabled={!formData.description.trim()}
+            <button onClick={runPipeline}
+              disabled={!formData.shift_description.trim() || !formData.facility_name.trim()}
               className="w-full py-3.5 px-6 bg-livo-primary text-white rounded-full font-semibold text-base hover:bg-livo-primary-hover active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 shadow-card">
-              Find Candidates →
+              Buscar profesionales disponibles →
             </button>
           </div>
         </div>
@@ -292,25 +297,17 @@ export default function Home() {
       <main className="min-h-screen bg-livo-bg-page flex flex-col items-center px-4 py-16">
         <div className="w-full max-w-2xl space-y-6">
           <div className="text-center">
-            <h1 className="font-display text-2xl font-semibold text-livo-slate">Running Pipeline</h1>
-            <p className="text-sm text-livo-text-muted mt-1">Finding the best {formData.role_type} candidates for Livo Health</p>
-            {jobId && <p className="text-xs text-livo-text-muted/60 mt-1 font-mono">Job ID: {jobId}</p>}
+            <h1 className="font-display text-2xl font-semibold text-livo-slate">Buscando profesionales…</h1>
+            <p className="text-sm text-livo-text-muted mt-1">{formData.facility_name}</p>
           </div>
 
+          {/* Stage tracker */}
           <div className="bg-white rounded-lg border border-black/10 shadow-card px-6 py-5">
             <div className="relative">
               <div className="absolute top-1.5 left-0 right-0 h-0.5 bg-livo-bg-secondary mx-6" />
               <div className="relative flex justify-between">
                 {PIPELINE_STAGES.map((stage) => (
                   <StageStatus key={stage.key} stage={stage} currentStage={currentStage} completedStages={completedStages} />
-                ))}
-              </div>
-              <div className="flex justify-between mt-2 sm:hidden">
-                {PIPELINE_STAGES.map((stage) => (
-                  <span key={stage.key} className={`text-[10px] font-medium ${
-                    completedStages.has(stage.key) ? "text-livo-success" :
-                    currentStage === stage.key    ? "text-livo-primary" : "text-livo-text-muted"
-                  }`}>{stage.label}</span>
                 ))}
               </div>
             </div>
@@ -323,18 +320,19 @@ export default function Home() {
               <span className="w-2 h-2 bg-livo-primary rounded-full animate-bounce [animation-delay:300ms]" />
             </span>
             <span className="text-sm text-livo-text-secondary font-medium">
-              {currentStage ? `Running ${currentStage}…` : "Working…"}
+              {currentStage ? `${currentStage}…` : "Iniciando…"}
             </span>
           </div>
 
+          {/* Activity log */}
           <div className="bg-white rounded-lg border border-black/10 shadow-card overflow-hidden">
             <div className="px-5 py-3 border-b border-black/5 flex items-center justify-between">
-              <span className="text-sm font-semibold text-livo-slate">Activity Log</span>
-              <span className="text-xs text-livo-text-muted">{progressLog.length} events</span>
+              <span className="text-sm font-semibold text-livo-slate">Registro de actividad</span>
+              <span className="text-xs text-livo-text-muted">{progressLog.length} eventos</span>
             </div>
             <div className="max-h-80 overflow-y-auto px-5 py-3 space-y-2">
               {progressLog.length === 0 ? (
-                <p className="text-sm text-livo-text-muted text-center py-4">Waiting for events…</p>
+                <p className="text-sm text-livo-text-muted text-center py-4">Esperando eventos…</p>
               ) : (
                 progressLog.map((entry, i) => (
                   <div key={i} className="flex items-start gap-2.5 animate-fadeIn">
@@ -353,7 +351,7 @@ export default function Home() {
             <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-livo-danger flex items-center justify-between">
               <span>{error}</span>
               <button onClick={() => { setError(""); setView("form"); }}
-                className="text-livo-danger hover:text-red-700 ml-4 font-medium text-xs">Back</button>
+                className="text-livo-danger hover:text-red-700 ml-4 font-medium text-xs">Volver</button>
             </div>
           )}
         </div>
@@ -362,51 +360,55 @@ export default function Home() {
   }
 
   // ─── RESULTS VIEW ─────────────────────────────────────────────────────────
-  const sortedCandidates = [...candidates].sort((a, b) => b.fit_score - a.fit_score);
-  const sources          = Array.from(new Set(candidates.map((c) => c.source)));
-  const filtered = sortedCandidates.filter((c) => {
-    if (filterRecommended && !c.recommended)              return false;
-    if (filterStarred && !starred.has(c.name))            return false;
-    if (filterSource !== "all" && c.source !== filterSource) return false;
-    if (c.fit_score < filterMinScore)                     return false;
+  const sorted   = [...professionals].sort((a, b) => b.fit_score - a.fit_score);
+  const filtered = sorted.filter((p) => {
+    if (filterRecommended && !p.recommended) return false;
+    if (p.fit_score < filterMinScore)        return false;
     return true;
   });
-  const toggleStar = (name: string) =>
-    setStarred((prev) => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; });
 
   const exportCSV = () => {
     const rows = [
-      ["Name","Source","Profile URL","Location","Email","Score","Technical","Culture","Recommended","Skills","Notable Work","Outreach Subject","Outreach Message"],
-      ...filtered.map((c) => [
-        c.name, c.source, c.profile_url ?? "", c.location ?? "", c.email ?? "",
-        c.fit_score, c.technical_score, c.culture_score, c.recommended ? "Yes" : "No",
-        c.skills.join("; "), c.notable_work ?? "", c.outreach_subject ?? "", c.outreach_message ?? "",
+      ["Nombre","Rol","Turnos en centro","Turnos en unidad","Total turnos","Último turno","Puntuación","Recomendado","Teléfono","Email","Mensaje WhatsApp"],
+      ...filtered.map((p) => [
+        p.name, p.role, p.shifts_at_facility, p.shifts_in_unit,
+        p.total_shifts, p.last_shift_date ?? "",
+        p.fit_score, p.recommended ? "Sí" : "No",
+        p.phone ?? "", p.email ?? "", p.message_body ?? "",
       ]),
     ];
-    const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csv  = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a"); a.href = url; a.download = "livo-hunter-candidates.csv"; a.click();
+    const a    = document.createElement("a");
+    a.href = url; a.download = "livo-turno-profesionales.csv"; a.click();
   };
 
   return (
     <main className="min-h-screen bg-livo-bg-page">
+      {/* Sticky header */}
       <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-black/10 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3 flex-wrap">
-              <span className="font-display text-sm font-bold text-livo-slate">{formData.role_type}</span>
-              {formData.location && <span className="text-xs text-livo-text-muted">📍 {formData.location}</span>}
-              <span className="text-livo-bg-secondary">|</span>
-              {stats ? (
+              {shift && (
                 <>
-                  <StatChip label="sourced"        value={stats.sourced}     color="blue"  />
-                  <StatChip label="recommended"    value={stats.recommended} color="teal"  />
-                  <StatChip label="outreach ready" value={stats.outreached}  color="green" />
-                  {starred.size > 0 && <StatChip label="starred" value={starred.size} color="amber" />}
+                  <span className="font-display text-sm font-bold text-livo-slate">{shift.role}</span>
+                  <span className="text-livo-bg-secondary">·</span>
+                  <span className="text-sm text-livo-text-secondary">{shift.facility_name}</span>
+                  {shift.unit && <span className="text-xs bg-livo-bg-secondary text-livo-text-secondary px-2 py-0.5 rounded-full">{shift.unit}</span>}
+                  <span className="text-livo-bg-secondary">·</span>
+                  <span className="text-xs text-livo-text-muted">{shift.date_str} {shift.display_time}</span>
                 </>
-              ) : (
-                <span className="text-sm text-livo-text-secondary">{candidates.length} candidates</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {stats && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <StatChip label="encontrados"    value={stats.sourced}     color="blue"  />
+                  <StatChip label="recomendados"   value={stats.recommended} color="teal"  />
+                  <StatChip label="con mensaje"    value={stats.contacted}   color="green" />
+                </div>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -415,37 +417,25 @@ export default function Home() {
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                Export CSV
+                Exportar CSV
               </button>
-              <button onClick={() => { setView("form"); setError(""); setFilterRecommended(false); setFilterStarred(false); setFilterSource("all"); setFilterMinScore(0); }}
+              <button onClick={() => { setView("form"); setError(""); setFilterRecommended(false); setFilterMinScore(0); }}
                 className="text-sm font-medium text-livo-primary hover:text-livo-primary-hover bg-livo-primary-light hover:bg-livo-primary/20 px-4 py-1.5 rounded-full transition-colors duration-200">
-                ← New Search
+                ← Nuevo turno
               </button>
             </div>
           </div>
 
+          {/* Filters */}
           <div className="flex items-center gap-3 flex-wrap pb-1">
             <button onClick={() => setFilterRecommended(!filterRecommended)}
               className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors duration-200 ${
                 filterRecommended ? "bg-livo-primary text-white border-livo-primary" : "bg-white text-livo-text-secondary border-black/10 hover:border-livo-primary/40"
               }`}>
-              ⭐ Recommended only
+              ⭐ Solo recomendados
             </button>
-            <button onClick={() => setFilterStarred(!filterStarred)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors duration-200 ${
-                filterStarred ? "bg-amber-500 text-white border-amber-500" : "bg-white text-livo-text-secondary border-black/10 hover:border-amber-300"
-              }`}>
-              ★ Shortlisted only
-            </button>
-            {sources.length > 1 && (
-              <select value={filterSource} onChange={(e) => setFilterSource(e.target.value)}
-                className="text-xs font-semibold px-3 py-1.5 rounded-full border border-black/10 bg-white text-livo-text-secondary focus:outline-none focus:ring-1 focus:ring-livo-primary cursor-pointer">
-                <option value="all">All sources</option>
-                {sources.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            )}
             <div className="flex items-center gap-2">
-              <span className="text-xs text-livo-text-secondary font-medium">Min score</span>
+              <span className="text-xs text-livo-text-secondary font-medium">Puntuación mínima</span>
               <input type="range" min={0} max={9} step={0.5} value={filterMinScore}
                 onChange={(e) => setFilterMinScore(parseFloat(e.target.value))}
                 className="w-24 accent-livo-primary" />
@@ -457,43 +447,44 @@ export default function Home() {
                   className={`px-3 py-1.5 text-xs font-semibold transition-colors duration-200 ${
                     viewMode === mode ? "bg-livo-primary text-white" : "bg-white text-livo-text-secondary hover:bg-livo-bg-page"
                   }`}>
-                  {mode === "grid" ? "⊞ Grid" : "☰ List"}
+                  {mode === "grid" ? "⊞ Grid" : "☰ Lista"}
                 </button>
               ))}
             </div>
-            <span className="text-xs text-livo-text-muted">{filtered.length} of {candidates.length}</span>
+            <span className="text-xs text-livo-text-muted">{filtered.length} de {professionals.length}</span>
           </div>
         </div>
       </div>
 
+      {/* Results */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="text-5xl mb-4">{candidates.length === 0 ? "🔍" : "🎛️"}</div>
+            <div className="text-5xl mb-4">{professionals.length === 0 ? "🔍" : "🎛️"}</div>
             <h2 className="font-display text-xl font-semibold text-livo-slate">
-              {candidates.length === 0 ? "No candidates found" : "No candidates match your filters"}
+              {professionals.length === 0 ? "Sin profesionales en la base de datos" : "Ningún profesional coincide con los filtros"}
             </h2>
             <p className="text-livo-text-muted mt-2 max-w-sm text-sm">
-              {candidates.length === 0 ? "Try broadening your job description or increasing the candidate count." : "Try loosening the filters above."}
+              {professionals.length === 0
+                ? "Configura las credenciales de Metabase en el .env del backend para acceder a la base de repetidores."
+                : "Prueba a reducir los filtros."}
             </p>
             <button
-              onClick={() => candidates.length === 0 ? setView("form") : (setFilterRecommended(false), setFilterStarred(false), setFilterSource("all"), setFilterMinScore(0))}
+              onClick={() => professionals.length === 0 ? setView("form") : (setFilterRecommended(false), setFilterMinScore(0))}
               className="mt-6 px-6 py-2.5 bg-livo-primary text-white rounded-full font-medium text-sm hover:bg-livo-primary-hover transition-colors duration-200">
-              {candidates.length === 0 ? "Try Again" : "Clear Filters"}
+              {professionals.length === 0 ? "Volver" : "Limpiar filtros"}
             </button>
           </div>
         ) : viewMode === "list" ? (
           <div className="space-y-2">
-            {filtered.map((c, i) => (
-              <CandidateCard key={i} candidate={c} jobId={jobId} apiUrl={API_URL}
-                starred={starred.has(c.name)} onStar={() => toggleStar(c.name)} listView />
+            {filtered.map((p, i) => (
+              <ProfessionalCard key={i} professional={p} shift={shift} listView />
             ))}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map((c, i) => (
-              <CandidateCard key={i} candidate={c} jobId={jobId} apiUrl={API_URL}
-                starred={starred.has(c.name)} onStar={() => toggleStar(c.name)} />
+            {filtered.map((p, i) => (
+              <ProfessionalCard key={i} professional={p} shift={shift} />
             ))}
           </div>
         )}
@@ -502,12 +493,11 @@ export default function Home() {
   );
 }
 
-function StatChip({ label, value, color }: { label: string; value: number; color: "blue" | "teal" | "green" | "amber" }) {
+function StatChip({ label, value, color }: { label: string; value: number; color: "blue" | "teal" | "green" }) {
   const styles: Record<string, string> = {
     blue:  "bg-blue-50 text-blue-700 border-blue-100",
     teal:  "bg-livo-primary-light text-livo-primary border-livo-primary/20",
     green: "bg-emerald-50 text-emerald-700 border-emerald-100",
-    amber: "bg-amber-50 text-amber-700 border-amber-100",
   };
   return (
     <span className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${styles[color]}`}>
